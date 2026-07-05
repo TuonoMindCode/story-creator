@@ -33,6 +33,8 @@ from backends import (
 from project import SETTINGS_FILE, StoryProject
 from theme import apply_theme, dark_palette
 
+__version__ = "1.0.0"
+
 
 class Worker(QThread):
     """Runs a blocking job function on a thread; fn(worker) -> result."""
@@ -161,7 +163,7 @@ class AppState(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Story Creator — Local LLM Story Writer")
+        self.setWindowTitle(f"Story Creator {__version__} — Local LLM Story Writer")
         self.resize(1280, 840)
 
         self.state = AppState()
