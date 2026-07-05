@@ -91,6 +91,12 @@ def _run(
     return text
 
 
+# sections where a thinking model already needed a bigger budget this session;
+# applied up front so every later call doesn't fail once and retry (which
+# would double generation time for e.g. every summary in a batch)
+_THINKING_FLOOR: dict[str, int] = {}
+
+
 def _run_with_thinking_retry(
     cfg: SectionConfig,
     section: str,
@@ -100,7 +106,12 @@ def _run_with_thinking_retry(
     on_chunk: Optional[Callable[[str], None]],
 ) -> str:
     """Like _run, but if a thinking model spends its whole budget on hidden
-    reasoning, retry once with a bigger Max tokens (within the context)."""
+    reasoning, retry with a bigger Max tokens (within the context) — and
+    remember the bigger budget for this section for the rest of the session."""
+    floor = _THINKING_FLOOR.get(section, 0)
+    if floor > cfg.params.max_tokens:
+        cfg = SectionConfig.from_dict(cfg.to_dict())
+        cfg.params.max_tokens = floor
     try:
         return _run(cfg, section, system, user, cancel, on_chunk)
     except backends.ReasoningOnlyError as e:
@@ -114,8 +125,11 @@ def _run_with_thinking_retry(
         bigger.params.max_tokens = int(new_max)
         applog.log(section, (
             f"thinking model used all {cfg.params.max_tokens} tokens on "
-            f"reasoning — retrying once with max_tokens={int(new_max)}"))
-        return _run(bigger, section, system, user, cancel, on_chunk)
+            f"reasoning — retrying with max_tokens={int(new_max)} (and using "
+            "that budget for this section from now on)"))
+        text = _run(bigger, section, system, user, cancel, on_chunk)
+        _THINKING_FLOOR[section] = int(new_max)
+        return text
 
 
 # ---------------------------------------------------------------------------

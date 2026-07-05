@@ -236,6 +236,12 @@ def main():
     small.params.max_tokens = 512
     out3 = pipeline.generate_summary(small, "scene text RETRY-THINK-TEST")
     assert out3 == "Recovered summary.", repr(out3)
+    # …and the bigger budget is remembered: the next call succeeds directly
+    assert pipeline._THINKING_FLOOR.get("summary", 0) >= 2048
+    small2 = SectionConfig(base_url=f"http://127.0.0.1:{port}")
+    small2.params.max_tokens = 512
+    out3b = pipeline.generate_summary(small2, "scene text RETRY-THINK-TEST")
+    assert out3b == "Recovered summary.", repr(out3b)
     # persistent reasoning-only: summary falls back to an excerpt, no crash
     out4 = pipeline.generate_summary(small, "scene text REASONING-TEST ONLY-THINK")
     assert "automatic excerpt" in out4, repr(out4)

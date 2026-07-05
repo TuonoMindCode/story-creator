@@ -119,6 +119,22 @@ not help — pip's PySide6 bundles its own Qt.
     prompts, full responses) for debugging bad stories. Size-capped
     (configurable, oldest half dropped automatically).
 
+## Tested models
+
+Mostly tested with these Gemma builds (non-thinking — they just write):
+
+- https://huggingface.co/llmfan46/gemma-4-31B-it-uncensored-heretic-GGUF
+- https://huggingface.co/HauhauCS/Gemma-4-E4B-Uncensored-HauhauCS-Aggressive
+
+**Thinking models (Qwen 3.5 and other Qwen thinking builds) need roughly
+DOUBLE the Max tokens on every section** — the hidden reasoning eats from the
+same reply budget, so with normal budgets responses get cut off and the
+summarizer may produce no summary at all. The app detects this, retries with a
+bigger budget automatically and keeps using it for the rest of the session,
+but setting generous Max tokens up front (Scene Writer 4096+, Summarizer
+2048+) avoids the wasted first attempts. For summaries a non-thinking model is
+simply the better tool.
+
 ## Context & tokens
 
 Everything sent for one scene — the storyboard, style guide, matched lorebook
