@@ -1,0 +1,23 @@
+# --- user data & generated content (never commit) ---
+settings.json
+settings.test.json
+story-creator.log
+*.log
+story-descriptions/
+storyboards/
+projects/
+prompt-presets/
+output/
+
+# --- python ---
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# --- OS / editor noise ---
+Thumbs.db
+.DS_Store
+.idea/
+.vscode/

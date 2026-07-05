@@ -1,0 +1,405 @@
+"""Offscreen smoke test: builds the whole UI and exercises non-LLM logic.
+
+Run with:  python test_smoke.py
+"""
+import os
+import sys
+
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication
+
+import pipeline
+import prompts
+from project import LorebookEntry, Scene, StoryProject
+
+
+def test_outline_parsing():
+    text = """SCENE 1: The Body in the Library
+LOCATION: Blackwood Manor, the library
+CHARACTERS: Inspector Hale, Lady Blackwood
+WHAT HAPPENS: A body is found at dawn. Hale arrives and notices the window
+was forced from the inside.
+PURPOSE: Establish the mystery and the closed circle of suspects.
+
+SCENE 2: Questions at Breakfast
+LOCATION: The dining room
+CHARACTERS: Inspector Hale, the houseguests
+WHAT HAPPENS: Hale interviews the guests. Everyone has an alibi; two of them
+contradict each other.
+PURPOSE: Introduce the suspects and the first contradiction.
+"""
+    scenes = pipeline.parse_outline(text)
+    assert len(scenes) == 2, f"expected 2 scenes, got {len(scenes)}"
+    assert scenes[0].title == "The Body in the Library", scenes[0].title
+    assert "forced from the inside" in scenes[0].beat
+    assert scenes[1].location == "The dining room", scenes[1].location
+    assert "contradiction" in scenes[1].purpose
+
+    # Faithful-Detailed outline format with the extra fields
+    detailed = """SCENE 1: The Body in the Library
+LOCATION: Blackwood Manor library
+TIME: Dawn, the morning after the storm
+CHARACTERS: Hale, Lady Blackwood
+WHAT HAPPENS: Hale is called in at first light. He examines the body and
+notices the window was forced from the inside. Lady Blackwood hovers at the
+door, too composed. Hale asks who found the body; her answer contradicts the
+maid's account. The scene ends with Hale pocketing a torn cufflink.
+KEY DETAILS: A monogrammed cufflink with the letter L; the smell of pipe
+smoke although nobody in the house smokes.
+CHARACTER FOCUS: Hale is weary but alert; he distrusts Lady Blackwood's calm.
+PURPOSE: Establish the mystery and plant the two key clues.
+"""
+    ds = pipeline.parse_outline(detailed)
+    assert len(ds) == 1
+    assert ds[0].location == "Blackwood Manor library — Dawn, the morning after the storm"
+    assert "Key details: A monogrammed cufflink" in ds[0].beat
+    assert "Character focus: Hale is weary" in ds[0].beat
+    assert "pipe" in ds[0].beat and "plant the two key clues" in ds[0].purpose
+    assert "KEY DETAILS" not in ds[0].characters, "labels leaked into fields"
+    print("outline parsing OK (default + detailed format)")
+
+
+def test_prompt_presets():
+    for preset in prompts.BUILTIN_PRESETS:
+        for section in prompts.SECTIONS:
+            tpl = prompts.get_prompt(preset, section)
+            assert tpl["system"] and tpl["user"], (preset, section)
+            bad = prompts.find_unknown_placeholders(tpl["system"] + tpl["user"])
+            assert not bad, f"unknown placeholders in {preset}/{section}: {bad}"
+    # Detailed-Summary overrides only the summary; the rest falls back to Default
+    detailed = prompts.get_prompt("Detailed-Summary", "summary")
+    assert "250 words" in detailed["user"]
+    assert prompts.get_prompt("Detailed-Summary", "scene") == \
+        prompts.get_prompt("Default", "scene")
+    print("prompt presets OK")
+
+
+def test_scene_prompt_assembly():
+    from backends import SectionConfig
+    story = StoryProject(
+        name="test",
+        storyboard_text=(
+            "# Title\nThe Blackwood Affair\n\n# Narrative Style Guide\n"
+            "Third person limited, past tense, dry wit.\n"
+        ),
+        scenes=[
+            Scene(title="One", beat="The body is found.",
+                  text="A long first scene. " * 200, summary="The body was found."),
+            Scene(title="Two", beat="Hale questions Lady Blackwood.",
+                  text="Second scene text. " * 200, summary="Hale asked questions."),
+            Scene(title="Three", beat="A second body appears."),
+        ],
+        num_scenes=3,
+    )
+    lore = [
+        LorebookEntry(name="Inspector Hale", keywords=["Hale"],
+                      content="A retired opera singer turned detective."),
+        LorebookEntry(name="The Ruby", keywords=["ruby"],
+                      content="Stolen in 1911.", always_include=True),
+    ]
+    cfg = SectionConfig()
+    cfg.context_length = 8192
+    system, user = pipeline.build_scene_prompts(cfg, story, 2, lore)
+    assert "dry wit" in system, "style guide missing"
+    assert system.count("dry wit") == 1, \
+        "style guide appears twice (should be stripped from the storyboard)"
+    assert "The Blackwood Affair" in system, "storyboard content missing"
+    assert "The Ruby" in system, "always-include lorebook entry missing"
+    assert "Scene 1 (One): The body was found." in user, "summary missing"
+    assert "Scene 2 (Two): Hale asked questions." in user, \
+        "previous scene's summary missing (only its tail was sent)"
+    assert "Second scene text." in user, "previous tail missing"
+    assert "A second body appears." in user, "scene beat missing"
+    assert "{" not in system.replace("{concept}", ""), "unfilled placeholder?"
+
+    # context report: simple verdict line + detailed tooltip breakdown
+    short, detail = pipeline.context_report(cfg, story, 2, lore)
+    assert "OK ✓" in short, short
+    assert "Summaries of 2 earlier scene(s)" in detail, detail
+    assert "space reserved for the reply" in detail, detail
+    cfg_small = SectionConfig()
+    cfg_small.context_length = 1024
+    short2, detail2 = pipeline.context_report(cfg_small, story, 2, lore)
+    assert "TOO BIG" in short2, short2
+    assert "lowering the Scene Writer's Max tokens" in short2, \
+        "oversized reply reserve should trigger the Max-tokens hint"
+    assert "Tip: Max tokens" in detail2, detail2
+
+    # tiny budget forces the previous-scene tail to be dropped
+    cfg.context_length = 1500
+    cfg.params.max_tokens = 1024
+    system2, user2 = pipeline.build_scene_prompts(cfg, story, 2, lore)
+    assert "Second scene text." not in user2, "previous tail should have been dropped"
+    assert "A second body appears." in user2, "scene beat must survive trimming"
+    assert pipeline.estimate_tokens(system2 + user2) < pipeline.estimate_tokens(system + user)
+    print("scene prompt assembly OK")
+
+
+def test_character_parsing():
+    text = """Inspector Hale: A retired opera singer turned detective. Sharp-eyed.
+- **Lady Blackwood**: The widow of the manor. Hiding a debt.
+Not a card line
+"""
+    entries = pipeline.parse_character_entries(text)
+    names = [e.name for e in entries]
+    assert "Inspector Hale" in names and "Lady Blackwood" in names, names
+    print("character parsing OK")
+
+
+def test_log_trim():
+    import applog
+    orig_file, orig_max = applog.LOG_FILE, applog.MAX_BYTES
+    from project import APP_DIR
+    applog.LOG_FILE = APP_DIR / "log-trim-test.log"
+    applog.MAX_BYTES = 4000
+    try:
+        for i in range(200):
+            applog.log("test", f"entry number {i} " + "x" * 60)
+        size = applog.LOG_FILE.stat().st_size
+        assert size < 8000, f"log grew unbounded: {size} bytes"
+        text = applog.read_log()
+        assert "older entries trimmed" in text
+        assert "entry number 199" in text, "newest entries must survive trimming"
+        assert "entry number 0 " not in text, "oldest entries should be gone"
+        # trimming cuts at a line boundary — every line starts with a timestamp
+        for line in text.strip().splitlines():
+            assert line[:2] == "20", f"line cut mid-entry: {line[:40]}"
+    finally:
+        applog.LOG_FILE.unlink(missing_ok=True)
+        applog.LOG_FILE, applog.MAX_BYTES = orig_file, orig_max
+    print("log size cap OK")
+
+
+def test_infinite_spin():
+    app = QApplication.instance() or QApplication(sys.argv)
+    from ui_common import make_infinite_spin
+    s = make_infinite_spin(600, 0, 7200, 10)
+    assert s.valueFromText("infinite") == 0
+    assert s.valueFromText("INFINITE") == 0
+    assert s.valueFromText("300") == 300
+    from PySide6.QtGui import QValidator
+    state, _, _ = s.validate("infinite", 8)
+    assert state == QValidator.Acceptable
+    state, _, _ = s.validate("inf", 3)
+    assert state == QValidator.Intermediate
+    s.setValue(0)
+    assert s.text() == "infinite"
+    print("infinite spinbox OK")
+
+
+def test_strip_think():
+    from backends import strip_think
+    assert strip_think("<think>plan</think>Story text.") == "Story text."
+    assert strip_think("Story only.") == "Story only."
+    assert strip_think("<think>never closed, all reasoning") == ""
+    assert strip_think("A<think>x</think>B<think>y</think>C") == "ABC"
+    print("strip_think OK")
+
+
+def test_project_roundtrip(tmp_ok=True):
+    story = StoryProject(name="smoke-test-story", concept="a test",
+                         storyboard_text="# Title\nSmoke Test\n")
+    story.scenes = [Scene(title="A", text="Once upon a time."),
+                    Scene(title="B", text="The end.")]
+    path = story.save()
+    loaded = StoryProject.load(path)
+    assert loaded.scenes[1].text == "The end."
+    combined = loaded.combined_text()
+    assert "Smoke Test" in combined and "Once upon a time." in combined
+    path.unlink()
+    print("project save/load OK")
+
+
+def test_writer_defaults():
+    from backends import default_section_params
+    p = default_section_params("writer")
+    assert p.ranges["temperature"] == [0.7, 1.0]
+    assert p.ranges["smoothing_factor"] == [0.15, 0.3], \
+        "writer default should include mild smoothing (kobold-only)"
+    assert p.max_tokens == 4096
+    # planning sections stay neutral — no smoothing
+    assert default_section_params("planner").ranges["smoothing_factor"] == [0.0, 0.0]
+    assert default_section_params("summarizer").ranges["smoothing_factor"] == [0.0, 0.0]
+    print("writer defaults OK")
+
+
+def test_param_ranges():
+    from backends import GenParams, SectionConfig
+    p = GenParams()
+    p.ranges["temperature"] = [0.6, 1.3]
+    rolled = p.rolled()
+    lo, hi = rolled.ranges["temperature"]
+    assert lo == hi and 0.6 <= lo <= 1.3, rolled.ranges["temperature"]
+    # rolled twice on the same rolled params must not change (story-stable)
+    again = rolled.rolled()
+    assert again.ranges["temperature"] == rolled.ranges["temperature"]
+    # old flat settings format migrates into ranges
+    old = GenParams.from_dict({"temperature": 0.7, "top_k": 50, "max_tokens": 1024})
+    assert old.ranges["temperature"] == [0.7, 0.7]
+    assert old.ranges["top_k"] == [50, 50] and old.max_tokens == 1024
+    # kobold extras included in payload only for koboldcpp
+    import backends
+    cfg = SectionConfig(backend="koboldcpp")
+    cfg.params.ranges["smoothing_factor"] = [0.3, 0.3]
+    _, payload = backends._build_payload(cfg, "s", "u")
+    assert payload["smoothing_factor"] == 0.3 and "rep_pen" in payload
+    cfg2 = SectionConfig(backend="llama.cpp")
+    cfg2.params.ranges["smoothing_factor"] = [0.3, 0.3]
+    _, payload2 = backends._build_payload(cfg2, "s", "u")
+    assert "smoothing_factor" not in payload2
+    print("param ranges + kobold extras OK")
+
+
+def test_full_context_mode():
+    from backends import SectionConfig
+    story = StoryProject(
+        name="t2", storyboard_text="# Title\nT\n",
+        scenes=[Scene(title="One", beat="b1", text="FULL SCENE ONE TEXT HERE.",
+                      summary="short summary one"),
+                Scene(title="Two", beat="b2", text="scene two text",
+                      summary="short summary two"),
+                Scene(title="Three", beat="b3")])
+    cfg = SectionConfig()
+    _, user_sum = pipeline.build_scene_prompts(cfg, story, 2, [],
+                                               context_mode="summaries")
+    assert "short summary one" in user_sum and "FULL SCENE ONE" not in user_sum
+    _, user_full = pipeline.build_scene_prompts(cfg, story, 2, [],
+                                                context_mode="full")
+    assert "FULL SCENE ONE TEXT HERE." in user_full
+    assert "scene two text" in user_full, "previous scene's full text missing"
+    assert "previous scene appears in full above" in user_full, \
+        "full-mode tail note missing"
+    print("full-context mode OK")
+
+
+def test_language_option():
+    from backends import SectionConfig
+    cfg = SectionConfig()
+    story = StoryProject(
+        name="t3", storyboard_text="# Title\nT\n",
+        scenes=[Scene(title="One", beat="b1")])
+    # language instruction lands in the scene system prompt
+    import backends as _b
+    captured = {}
+    orig = _b.stream_generate
+    _b.stream_generate = lambda cfg, system, user, **kw: captured.update(
+        system=system, user=user) or "x"
+    try:
+        pipeline.generate_scene(cfg, story, 0, [], language="Svenska")
+        assert "Svenska" in captured["system"], "language missing from scene prompt"
+        pipeline.generate_scene(cfg, story, 0, [], language="English")
+        assert "Write all story prose in" not in captured["system"], \
+            "English must not add a language note"
+        pipeline.generate_summary(cfg, "text", language="Svenska")
+        assert "Svenska" in captured["user"]
+        pipeline.generate_storyboard(cfg, "idea", 3, language="Svenska",
+                                     plan_in_language=True)
+        assert "Svenska" in captured["system"]
+        pipeline.generate_storyboard(cfg, "idea", 3, language="Svenska",
+                                     plan_in_language=False)
+        assert "Svenska" not in captured["system"], \
+            "storyboard must stay English unless plan_in_language is on"
+    finally:
+        _b.stream_generate = orig
+    print("language option OK")
+
+
+def test_ui_builds():
+    app = QApplication.instance() or QApplication(sys.argv)
+    import app as appmod
+    from project import APP_DIR
+    # isolate the test from the user's real settings.json
+    test_settings = APP_DIR / "settings.test.json"
+    if test_settings.exists():
+        test_settings.unlink()
+    appmod.SETTINGS_FILE = test_settings
+    win = appmod.MainWindow()
+    assert win.tabs.count() == 11, f"expected 11 tabs, got {win.tabs.count()}"
+    assert "summarizer" in win.state.sections
+    # builder compose includes the writing-style options
+    desc = win.tab_builder.compose()
+    assert "Genre: Fantasy" in desc
+    assert "Writing style requirements:" in desc
+    assert "Dialogue vs description:" in desc and "Pacing:" in desc
+    assert "Ending:" not in desc  # default "Let the story decide" adds no line
+    # settings roundtrip with a parameter range
+    # the status bar the section widgets talk to must be the live one
+    win.statusBar().showMessage("probe")
+    win.tab_start.section_widgets["writer"].status_cb("probe two")
+    assert win.statusBar().currentMessage() == "probe two", \
+        "section widgets are wired to a dead status bar"
+    # a model refresh against a dead server must not raise, just report
+    win.tab_start.section_widgets["writer"].cfg.backend = "koboldcpp"
+    win.state.backends_cfg["koboldcpp"].base_url = "http://127.0.0.1:9"  # closed port
+    win.tab_start.section_widgets["writer"].refresh_models()  # must not raise
+    assert "is the server running?" in win.statusBar().currentMessage(), \
+        win.statusBar().currentMessage()
+
+    # editable description files: preview edits reach get_concept and the file
+    import project as prj_mod
+    desc_path = prj_mod.save_description("smoke-desc-test", "original idea text")
+    win.state.descriptions_changed.emit()
+    win.tab_start.radio_file.setChecked(True)
+    idx = win.tab_start.file_box.findText(desc_path.name)
+    assert idx >= 0, "saved description not listed in the dropdown"
+    win.tab_start.file_box.setCurrentIndex(idx)
+    assert win.tab_start.file_preview.toPlainText() == "original idea text"
+    win.tab_start.file_preview.setPlainText("edited idea text")
+    assert win.tab_start.get_concept() == "edited idea text"
+    assert desc_path.read_text(encoding="utf-8") == "edited idea text", \
+        "preview edits were not written back to the description file"
+    win.tab_start.radio_text.setChecked(True)
+    desc_path.unlink()
+
+    # each source mode shows only its own panel
+    ts = win.tab_start
+    ts.radio_board.setChecked(True)
+    assert ts.free_panel.isHidden() and ts.file_panel.isHidden()
+    assert not ts.board_panel.isHidden()
+    ts.radio_file.setChecked(True)
+    assert ts.free_panel.isHidden() and ts.board_panel.isHidden()
+    assert not ts.file_panel.isHidden()
+    ts.radio_text.setChecked(True)
+    assert not ts.free_panel.isHidden()
+    assert ts.file_panel.isHidden() and ts.board_panel.isHidden()
+
+    # quick setup applies a preset combination to all four sections
+    win.state.sections["planner"].params.max_tokens = 1536
+    win.tab_prompts._quick_setup_clicked(1)  # "Detailed & faithful"
+    assert win.state.sections["storyboard"].prompt_preset == "Faithful-Detailed"
+    assert win.state.sections["planner"].prompt_preset == "Faithful-Detailed"
+    assert win.state.sections["writer"].prompt_preset == "Default"
+    assert win.state.sections["summarizer"].prompt_preset == "Detailed-Summary"
+    assert win.state.sections["planner"].params.max_tokens == 4096, \
+        "quick setup should raise the planner's Max tokens"
+    win.tab_prompts._sync_quick_radios()
+    assert win.tab_prompts.quick_radios[1].isChecked()
+    # changing one dropdown makes it a custom mix — no quick radio selected
+    win.tab_prompts.use_boxes["writer"].setCurrentText("Qwen-tuned")
+    assert not any(rb.isChecked() for rb in win.tab_prompts.quick_radios)
+
+    win.state.sections["writer"].params.ranges["temperature"] = [0.61, 1.29]
+    win.state.save_settings()
+    win.state.load_settings()
+    assert win.state.sections["writer"].params.ranges["temperature"] == [0.61, 1.29]
+    win.close()
+    test_settings.unlink(missing_ok=True)
+    print("UI builds OK (11 tabs), settings persist OK")
+
+
+if __name__ == "__main__":
+    test_outline_parsing()
+    test_prompt_presets()
+    test_scene_prompt_assembly()
+    test_character_parsing()
+    test_writer_defaults()
+    test_param_ranges()
+    test_full_context_mode()
+    test_language_option()
+    test_log_trim()
+    test_infinite_spin()
+    test_strip_think()
+    test_project_roundtrip()
+    test_ui_builds()
+    print("ALL SMOKE TESTS PASSED")
