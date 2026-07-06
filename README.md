@@ -129,11 +129,14 @@ Mostly tested with these Gemma builds (non-thinking — they just write):
 **Thinking models (Qwen 3.5 and other Qwen thinking builds) need roughly
 DOUBLE the Max tokens on every section** — the hidden reasoning eats from the
 same reply budget, so with normal budgets responses get cut off and the
-summarizer may produce no summary at all. The app detects this, retries with a
-bigger budget automatically and keeps using it for the rest of the session,
-but setting generous Max tokens up front (Scene Writer 4096+, Summarizer
-2048+) avoids the wasted first attempts. For summaries a non-thinking model is
-simply the better tool.
+summarizer may produce no summary at all. Worse, Qwen's thinking mode **loops
+endlessly at low temperature** (Qwen's own docs warn against near-greedy
+decoding), which hits the Summarizer hardest since it runs at temp 0.3 for
+accuracy. The app detects both cases and fixes them automatically on retry —
+bigger budget, temperature raised to ≥0.7, and Qwen's `/no_think` switch —
+then keeps the fix for the rest of the session. Still, setting generous Max
+tokens up front (Scene Writer 4096+, Summarizer 2048+) avoids the wasted first
+attempts, and for summaries a non-thinking model is simply the better tool.
 
 ## Context & tokens
 

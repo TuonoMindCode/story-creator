@@ -120,6 +120,21 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(f"data: {json.dumps(obj)}\n\n".encode("utf-8"))
             self.wfile.write(b"data: [DONE]\n\n")
             return
+        if chat and "nothink-test" in blob:
+            # emulates Qwen stuck in a thinking loop: only answers directly
+            # when the /no_think mitigation is in the prompt
+            if "/no_think" in blob:
+                for piece in ("Direct ", "answer."):
+                    obj = {"choices": [{"delta": {"content": piece}}]}
+                    self.wfile.write(
+                        f"data: {json.dumps(obj)}\n\n".encode("utf-8"))
+            else:
+                for piece in ("looping ", "thoughts " * 30):
+                    obj = {"choices": [{"delta": {"reasoning": piece}}]}
+                    self.wfile.write(
+                        f"data: {json.dumps(obj)}\n\n".encode("utf-8"))
+            self.wfile.write(b"data: [DONE]\n\n")
+            return
         if chat and "retry-think-test" in blob:
             # thinks everything away at a small budget; succeeds at a big one
             if payload.get("max_tokens", 0) >= 2048:
@@ -245,6 +260,24 @@ def main():
     # persistent reasoning-only: summary falls back to an excerpt, no crash
     out4 = pipeline.generate_summary(small, "scene text REASONING-TEST ONLY-THINK")
     assert "automatic excerpt" in out4, repr(out4)
+    # thinking LOOP (Qwen at low temperature): fixed by the /no_think +
+    # temperature mitigation on retry, then remembered for the session
+    pipeline._THINKING_FLOOR.clear()
+    pipeline._THINKING_MITIGATE.clear()
+    loopy = SectionConfig(base_url=f"http://127.0.0.1:{port}")
+    loopy.params.max_tokens = 512
+    loopy.params.ranges["temperature"] = [0.3, 0.3]
+    out_loop = pipeline.generate_summary(loopy, "scene text NOTHINK-TEST")
+    assert out_loop == "Direct answer.", repr(out_loop)
+    assert "summary" in pipeline._THINKING_MITIGATE
+    # next call succeeds on the FIRST attempt (mitigation applied up front)
+    loopy2 = SectionConfig(base_url=f"http://127.0.0.1:{port}")
+    loopy2.params.max_tokens = 512
+    loopy2.params.ranges["temperature"] = [0.3, 0.3]
+    out_loop2 = pipeline.generate_summary(loopy2, "scene text NOTHINK-TEST")
+    assert out_loop2 == "Direct answer.", repr(out_loop2)
+    print("thinking-loop mitigation OK (/no_think + temperature, remembered)")
+
     # …but a scene that stays reasoning-only still raises (prose is essential)
     story_t = StoryProject(name="t", storyboard_text="# Title\nT\n",
                            scenes=[Scene(title="One",

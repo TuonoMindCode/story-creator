@@ -91,10 +91,28 @@ def _run(
     return text
 
 
-# sections where a thinking model already needed a bigger budget this session;
-# applied up front so every later call doesn't fail once and retry (which
-# would double generation time for e.g. every summary in a batch)
+# sections where a thinking model already failed once this session: the fix
+# (bigger budget + anti-loop measures) is applied up front from then on, so
+# later calls don't fail-and-retry every single time
 _THINKING_FLOOR: dict[str, int] = {}
+_THINKING_MITIGATE: set = set()
+
+# Qwen's soft switch to disable thinking, plus a model-agnostic instruction;
+# harmless for models that don't know the tag
+_NO_THINK_SUFFIX = (
+    "\n\n/no_think\n"
+    "Do not reason or think out loud — write the answer directly."
+)
+
+
+def _apply_mitigation(cfg: SectionConfig, user: str) -> tuple[SectionConfig, str]:
+    """Anti-endless-thinking measures: Qwen's thinking mode LOOPS at low
+    temperature (their docs warn against near-greedy decoding), so raise it,
+    and ask the model not to think (/no_think works on Qwen hybrids)."""
+    cfg = SectionConfig.from_dict(cfg.to_dict())
+    if cfg.params.get_range("temperature")[0] < 0.6:
+        cfg.params.ranges["temperature"] = [0.7, 0.7]
+    return cfg, user + _NO_THINK_SUFFIX
 
 
 def _run_with_thinking_retry(
@@ -105,13 +123,15 @@ def _run_with_thinking_retry(
     cancel: Optional[threading.Event],
     on_chunk: Optional[Callable[[str], None]],
 ) -> str:
-    """Like _run, but if a thinking model spends its whole budget on hidden
-    reasoning, retry with a bigger Max tokens (within the context) — and
-    remember the bigger budget for this section for the rest of the session."""
+    """Like _run, but when a thinking model spends its whole budget on hidden
+    reasoning, retry with a bigger Max tokens AND anti-loop measures — and
+    remember the whole fix for this section for the rest of the session."""
     floor = _THINKING_FLOOR.get(section, 0)
     if floor > cfg.params.max_tokens:
         cfg = SectionConfig.from_dict(cfg.to_dict())
         cfg.params.max_tokens = floor
+    if section in _THINKING_MITIGATE:
+        cfg, user = _apply_mitigation(cfg, user)
     try:
         return _run(cfg, section, system, user, cancel, on_chunk)
     except backends.ReasoningOnlyError as e:
@@ -119,16 +139,21 @@ def _run_with_thinking_retry(
         new_max = max(cfg.params.max_tokens * 2,
                       e.reasoning_tokens * 2 + 1024, 2048)
         new_max = min(new_max, room)
-        if new_max <= cfg.params.max_tokens:
-            raise
+        if new_max <= cfg.params.max_tokens and section in _THINKING_MITIGATE:
+            raise  # already tried everything we have
         bigger = SectionConfig.from_dict(cfg.to_dict())
-        bigger.params.max_tokens = int(new_max)
+        bigger.params.max_tokens = int(max(new_max, cfg.params.max_tokens))
+        retry_user = user
+        if section not in _THINKING_MITIGATE:
+            bigger, retry_user = _apply_mitigation(bigger, user)
         applog.log(section, (
             f"thinking model used all {cfg.params.max_tokens} tokens on "
-            f"reasoning — retrying with max_tokens={int(new_max)} (and using "
-            "that budget for this section from now on)"))
-        text = _run(bigger, section, system, user, cancel, on_chunk)
-        _THINKING_FLOOR[section] = int(new_max)
+            f"reasoning — retrying with max_tokens={bigger.params.max_tokens}, "
+            "temperature ≥0.7 and /no_think (low temperature makes Qwen "
+            "thinking loop); this fix stays on for the section this session"))
+        text = _run(bigger, section, system, retry_user, cancel, on_chunk)
+        _THINKING_FLOOR[section] = bigger.params.max_tokens
+        _THINKING_MITIGATE.add(section)
         return text
 
 
