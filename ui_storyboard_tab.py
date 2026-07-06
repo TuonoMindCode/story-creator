@@ -26,6 +26,8 @@ class StoryboardTab(QWidget):
         self.main = main
         self.state = main.state
         self._loading = False
+        self._stream_buffer = ""
+        self._viewing_stream = False
 
         lay = QVBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
@@ -126,6 +128,7 @@ class StoryboardTab(QWidget):
     def _selected(self, name: str):
         if not name:
             return
+        self._viewing_stream = False  # user chose a saved board over the stream
         self._save_current_edits()
         self.state.selected_storyboard = name
         self._loading = True
@@ -166,9 +169,16 @@ class StoryboardTab(QWidget):
         self.editor.clear()
         self._loading = False
         self._dirty = False
+        self._stream_buffer = ""
+        self._viewing_stream = True  # editor currently shows the live stream
         self.title_label.setText(label)
 
     def stream_piece(self, piece: str):
+        self._stream_buffer += piece
+        if not self._viewing_stream:
+            # the user switched to an old storyboard — don't pollute its view;
+            # the finished board is selected automatically when done
+            return
         self._loading = True
         cursor = self.editor.textCursor()
         cursor.movePosition(cursor.MoveOperation.End)

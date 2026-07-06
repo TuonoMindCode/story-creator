@@ -55,20 +55,43 @@ def main_test():
     seen_during = []
 
     main.tab_start.create_storyboard()
-    # capture editor content while the job is still running
+    # capture editor content while the job is still running; midway, switch to
+    # an old storyboard — its view must NOT be polluted by the live stream
+    sb = main.tab_storyboard
+    switched_ok = None
     t0 = time.time()
     while main.is_busy() and time.time() - t0 < 30:
         qapp.processEvents()
-        text_now = main.tab_storyboard.editor.toPlainText()
-        if text_now:
+        text_now = sb.editor.toPlainText()
+        if text_now and switched_ok is None:
             seen_during.append(len(text_now))
+        if (switched_ok is None and len(seen_during) > 5
+                and seen_during[-1] > seen_during[0]
+                and sb.list_old.count() >= 1):
+            sb.list_old.setCurrentRow(0)
+            qapp.processEvents()
+            old_text = sb.editor.toPlainText()
+            polluted = False
+            for _ in range(30):
+                if not main.is_busy():
+                    break  # done-handler may now legitimately switch the view
+                qapp.processEvents()
+                if main.is_busy() and sb.editor.toPlainText() != old_text:
+                    polluted = True
+                    break
+                time.sleep(0.01)
+            switched_ok = not polluted
         time.sleep(0.005)
     qapp.processEvents()
     assert seen_during and seen_during[0] < seen_during[-1], \
         f"storyboard did not stream live: {seen_during[:5]}"
-    assert "Blackwood" in main.tab_storyboard.editor.toPlainText()
-    assert main.tab_storyboard.list.count() >= 1, "storyboard list not refreshed"
-    print(f"storyboard streams live OK ({len(seen_during)} UI updates)")
+    if switched_ok is not None:
+        assert switched_ok, "live stream polluted the old storyboard view"
+    # when done, the finished board is auto-selected and fully shown
+    assert "Blackwood" in sb.editor.toPlainText()
+    assert sb.list.count() >= 1, "storyboard list not refreshed"
+    print(f"storyboard streams live OK ({len(seen_during)} UI updates, "
+          f"mid-stream switch checked: {switched_ok})")
 
     # --- batch run: 2 stories, all-new mode ----------------------------------
     before_projects = set(prj.list_projects())
