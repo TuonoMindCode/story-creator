@@ -72,7 +72,7 @@ def main_test():
             qapp.processEvents()
             old_text = sb.editor.toPlainText()
             polluted = False
-            for _ in range(30):
+            for _ in range(15):
                 if not main.is_busy():
                     break  # done-handler may now legitimately switch the view
                 qapp.processEvents()
@@ -80,6 +80,16 @@ def main_test():
                     polluted = True
                     break
                 time.sleep(0.01)
+            # the "⏵ generating…" entry must exist and bring back the live view
+            if main.is_busy():
+                assert sb.list.count() >= 1 and \
+                    sb.list.item(0).text().startswith("⏵"), \
+                    "no generating entry in the list during streaming"
+                sb.list.setCurrentRow(0)
+                qapp.processEvents()
+                assert sb._viewing_stream, "clicking the entry did not return to live view"
+                assert sb.editor.toPlainText() == sb._stream_buffer, \
+                    "live view does not show the buffered stream"
             switched_ok = not polluted
         time.sleep(0.005)
     qapp.processEvents()
@@ -87,9 +97,13 @@ def main_test():
         f"storyboard did not stream live: {seen_during[:5]}"
     if switched_ok is not None:
         assert switched_ok, "live stream polluted the old storyboard view"
-    # when done, the finished board is auto-selected and fully shown
+    # when done, the finished board is auto-selected and fully shown, and the
+    # "⏵ generating…" entry is gone
     assert "Blackwood" in sb.editor.toPlainText()
     assert sb.list.count() >= 1, "storyboard list not refreshed"
+    assert not any(sb.list.item(i).text().startswith("⏵")
+                   for i in range(sb.list.count())), \
+        "generating entry still in the list after completion"
     print(f"storyboard streams live OK ({len(seen_during)} UI updates, "
           f"mid-stream switch checked: {switched_ok})")
 

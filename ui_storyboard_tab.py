@@ -19,6 +19,8 @@ import pipeline
 import project as prj
 from project import StoryProject
 
+GENERATING_ITEM = "⏵ generating… (click to watch live)"
+
 
 class StoryboardTab(QWidget):
     def __init__(self, main, parent=None):
@@ -28,6 +30,7 @@ class StoryboardTab(QWidget):
         self._loading = False
         self._stream_buffer = ""
         self._viewing_stream = False
+        self._streaming = False  # a storyboard is being generated right now
 
         lay = QVBoxLayout(self)
         splitter = QSplitter(Qt.Horizontal)
@@ -92,6 +95,9 @@ class StoryboardTab(QWidget):
         splitter.setSizes([260, 900])
 
         self.state.storyboards_changed.connect(self.refresh_list)
+        # if a generation is cancelled or errors out, drop the live entry
+        self.state.busy_changed.connect(
+            lambda busy: None if busy else self.end_external_stream())
         self.refresh_list()
 
     # -- list handling --------------------------------------------------------
@@ -106,6 +112,14 @@ class StoryboardTab(QWidget):
             widget.clear()
             widget.addItems(names)
             widget.blockSignals(False)
+        if self._streaming:
+            self.list.blockSignals(True)
+            self.list.insertItem(0, GENERATING_ITEM)
+            if self._viewing_stream:
+                self.list.setCurrentRow(0)
+            self.list.blockSignals(False)
+        if self._streaming and self._viewing_stream:
+            return  # keep watching the live stream
         if current:
             self.select_storyboard(current)
 
@@ -123,6 +137,9 @@ class StoryboardTab(QWidget):
         other.blockSignals(True)
         other.setCurrentRow(-1)
         other.blockSignals(False)
+        if name == GENERATING_ITEM:
+            self._return_to_stream()
+            return
         self._selected(name)
 
     def _selected(self, name: str):
@@ -138,7 +155,8 @@ class StoryboardTab(QWidget):
         self.main.tab_lorebook.refresh()
 
     def _text_edited(self):
-        if self._loading:
+        if self._loading or self._viewing_stream:
+            # never mark the live-stream view as edits of the selected board
             return
         self._dirty = True
 
@@ -171,13 +189,36 @@ class StoryboardTab(QWidget):
         self._dirty = False
         self._stream_buffer = ""
         self._viewing_stream = True  # editor currently shows the live stream
+        self._streaming = True
+        self.refresh_list()          # adds the "⏵ generating…" entry
         self.title_label.setText(label)
+
+    def end_external_stream(self):
+        """The generation finished (or was cancelled) — drop the live entry."""
+        if not self._streaming:
+            return
+        self._streaming = False
+        self._viewing_stream = False
+        self.refresh_list()
+
+    def _return_to_stream(self):
+        """User clicked the '⏵ generating…' entry — show the live view again."""
+        self._save_current_edits()
+        self._viewing_stream = True
+        self._loading = True
+        self.editor.setPlainText(self._stream_buffer)
+        cursor = self.editor.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+        self.editor.setTextCursor(cursor)
+        self._loading = False
+        self._dirty = False
+        self.title_label.setText("Generating storyboard… (live)")
 
     def stream_piece(self, piece: str):
         self._stream_buffer += piece
         if not self._viewing_stream:
             # the user switched to an old storyboard — don't pollute its view;
-            # the finished board is selected automatically when done
+            # the '⏵ generating…' list entry brings the live view back
             return
         self._loading = True
         cursor = self.editor.textCursor()

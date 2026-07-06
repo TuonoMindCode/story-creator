@@ -578,6 +578,7 @@ class StartTab(QWidget):
             return path.stem
 
         def done(name):
+            board_tab.end_external_stream()
             if not name:
                 return
             self.state.selected_storyboard = name
@@ -879,6 +880,7 @@ class StartTab(QWidget):
                           status=f"Batch running: {spec.label}")
 
     def _batch_board_done(self, name: str):
+        self.main.tab_storyboard.end_external_stream()
         self.state.selected_storyboard = name
         self.state.ui.setdefault("batch_boards", []).append(name)
         self.state.storyboards_changed.emit()
