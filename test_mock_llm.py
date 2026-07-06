@@ -257,9 +257,16 @@ def main():
     small2.params.max_tokens = 512
     out3b = pipeline.generate_summary(small2, "scene text RETRY-THINK-TEST")
     assert out3b == "Recovered summary.", repr(out3b)
-    # persistent reasoning-only: summary falls back to an excerpt, no crash
-    out4 = pipeline.generate_summary(small, "scene text REASONING-TEST ONLY-THINK")
+    # persistent reasoning-only: summary falls back to an excerpt, no crash,
+    # and the user is warned via the status notification
+    warns = []
+    pipeline.NOTIFY = warns.append
+    try:
+        out4 = pipeline.generate_summary(small, "scene text REASONING-TEST ONLY-THINK")
+    finally:
+        pipeline.NOTIFY = None
     assert "automatic excerpt" in out4, repr(out4)
+    assert warns and "Re-summarize" in warns[0], warns
     # thinking LOOP (Qwen at low temperature): fixed by the /no_think +
     # temperature mitigation on retry, then remembered for the session
     pipeline._THINKING_FLOOR.clear()

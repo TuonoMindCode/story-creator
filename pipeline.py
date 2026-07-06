@@ -151,7 +151,20 @@ def _run_with_thinking_retry(
             f"reasoning — retrying with max_tokens={bigger.params.max_tokens}, "
             "temperature ≥0.7 and /no_think (low temperature makes Qwen "
             "thinking loop); this fix stays on for the section this session"))
-        text = _run(bigger, section, system, retry_user, cancel, on_chunk)
+        try:
+            text = _run(bigger, section, system, retry_user, cancel, on_chunk)
+        except backends.ReasoningOnlyError:
+            # last chance: give it every remaining token of the context
+            room = cfg.context_length - estimate_tokens(system + retry_user) - 256
+            if room <= bigger.params.max_tokens:
+                raise
+            final = SectionConfig.from_dict(bigger.to_dict())
+            final.params.max_tokens = int(room)
+            applog.log(section, (
+                "still only reasoning — one last try with the entire "
+                f"remaining context (max_tokens={int(room)})"))
+            text = _run(final, section, system, retry_user, cancel, on_chunk)
+            bigger = final
         _THINKING_FLOOR[section] = bigger.params.max_tokens
         _THINKING_MITIGATE.add(section)
         return text
@@ -500,8 +513,12 @@ def generate_summary(
         # a missing summary must never kill a story/batch — fall back to an
         # excerpt of the scene so later scenes still get some continuity
         applog.log("summary", (
-            "summarizer produced only reasoning even after retry — using a "
+            "summarizer produced only reasoning even after retries — using a "
             "scene excerpt as the summary instead"))
+        if NOTIFY is not None:
+            NOTIFY("⚠ A scene summary could not be generated (the model only "
+                   "'thinks') — an excerpt was used. Fix it with Re-summarize "
+                   "Scene, or use a non-thinking Summarizer model.")
         return ("(automatic excerpt — the summarizer model produced no "
                 "summary) …" + tail_text(scene_text, 150))
 
