@@ -220,3 +220,10 @@ python test_ui_stream.py  # live streaming, batch queue, soft-stop — offscreen
 
 The tests use a mock LLM server and an isolated settings file — they never
 touch your real settings, stories, or servers.
+
+## Contact
+
+Questions, bug reports or suggestions are welcome:
+
+- **Email:** tuonomindcode@bahnhof.se
+- **GitHub issues:** https://github.com/TuonoMindCode/story-creator/issues
