@@ -7,8 +7,6 @@ Qwen3.5 thinking model is thinking too mutch on the Summarizer, so sometimes it
 dos not Summarize a scene, qwen is like thinking over 5000 tokens... 
 fix is to use a none thinking model for the summerizer.
 
-I've reached the Fable 5 limit. I'll try to fix it later, but it's most likely not fixable.
-
 The rest of the readme is created by Claude. 
 
 ![Story Start tab](story-start02.PNG)
