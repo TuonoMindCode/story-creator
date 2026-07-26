@@ -133,10 +133,18 @@ summarizer may produce no summary at all. Worse, Qwen's thinking mode **loops
 endlessly at low temperature** (Qwen's own docs warn against near-greedy
 decoding), which hits the Summarizer hardest since it runs at temp 0.3 for
 accuracy. The app detects both cases and fixes them automatically on retry —
-bigger budget, temperature raised to ≥0.7, and Qwen's `/no_think` switch —
-then keeps the fix for the rest of the session. Still, setting generous Max
-tokens up front (Scene Writer 4096+, Summarizer 2048+) avoids the wasted first
-attempts, and for summaries a non-thinking model is simply the better tool.
+bigger budget, temperature raised to ≥0.7, and Qwen's `/no_think` switch, then
+one last try with the whole remaining context — and keeps whatever worked for
+the rest of the session. If a model only ever produces reasoning for a task,
+it is marked as such and later calls fail fast into the excerpt fallback
+instead of burning minutes per scene (pressing **Re-summarize Scene** always
+forces a real new attempt). Still, setting generous Max tokens up front (Scene
+Writer 4096+, Summarizer 2048+) avoids the wasted first attempts, and for
+summaries a non-thinking model is simply the better tool.
+
+Thinking is **visible while it happens**: reasoning streams into the scene box
+and into the scene-summary box, so a slow thinking model never looks like a
+frozen app — the clean text replaces it when the call finishes.
 
 ## Context & tokens
 

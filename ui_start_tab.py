@@ -87,6 +87,9 @@ class BatchBridge(QObject):
     scene_started = Signal(int)
     scene_chunk = Signal(int, str)
     scene_done = Signal(int)
+    summary_started = Signal(int)
+    summary_chunk = Signal(int, str)
+    summary_done = Signal(int)
     story_done = Signal(str)          # project name saved + exported
 
 
@@ -704,6 +707,9 @@ class StartTab(QWidget):
         bridge.scene_started.connect(writer_tab._on_scene_started)
         bridge.scene_chunk.connect(writer_tab._on_scene_chunk)
         bridge.scene_done.connect(writer_tab._on_scene_done)
+        bridge.summary_started.connect(writer_tab._on_summary_started)
+        bridge.summary_chunk.connect(writer_tab._on_summary_chunk)
+        bridge.summary_done.connect(writer_tab._on_summary_done)
         bridge.story_done.connect(self._batch_story_done)
         self._batch_bridge = bridge  # keep alive while the job runs
 
@@ -824,9 +830,12 @@ class StartTab(QWidget):
                     if (spec.context_mode != "full" and k < len(story.scenes) - 1
                             and scene.text.strip()):
                         worker.progress.emit(f"{label} — summarizing scene {k + 1}…")
+                        bridge.summary_started.emit(k)
                         scene.summary = pipeline.generate_summary(
                             cfg_summ, scene.text, language=spec.language,
-                            cancel=worker.cancel)
+                            cancel=worker.cancel,
+                            on_chunk=lambda p, i=k: bridge.summary_chunk.emit(i, p))
+                        bridge.summary_done.emit(k)
                     story.save()
                     bridge.scene_done.emit(k)
                     tick()

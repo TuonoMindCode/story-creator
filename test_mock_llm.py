@@ -269,8 +269,7 @@ def main():
     assert warns and "Re-summarize" in warns[0], warns
     # thinking LOOP (Qwen at low temperature): fixed by the /no_think +
     # temperature mitigation on retry, then remembered for the session
-    pipeline._THINKING_FLOOR.clear()
-    pipeline._THINKING_MITIGATE.clear()
+    pipeline.reset_thinking_state()
     loopy = SectionConfig(base_url=f"http://127.0.0.1:{port}")
     loopy.params.max_tokens = 512
     loopy.params.ranges["temperature"] = [0.3, 0.3]
@@ -284,6 +283,23 @@ def main():
     out_loop2 = pipeline.generate_summary(loopy2, "scene text NOTHINK-TEST")
     assert out_loop2 == "Direct answer.", repr(out_loop2)
     print("thinking-loop mitigation OK (/no_think + temperature, remembered)")
+
+    # a model that only ever thinks is marked hopeless after the full-context
+    # try, so later calls fail fast instead of burning minutes per scene
+    pipeline.reset_thinking_state()
+    hopeless = SectionConfig(base_url=f"http://127.0.0.1:{port}")
+    hopeless.params.max_tokens = 512
+    pipeline.NOTIFY = None
+    out_h = pipeline.generate_summary(hopeless, "text REASONING-TEST ONLY-THINK")
+    assert "automatic excerpt" in out_h, repr(out_h)
+    assert any(k[0] == "summary" for k in pipeline._THINKING_HOPELESS), \
+        "model was not marked hopeless"
+    t_fast = time.time()
+    out_h2 = pipeline.generate_summary(hopeless, "text REASONING-TEST ONLY-THINK")
+    assert "automatic excerpt" in out_h2
+    assert time.time() - t_fast < 2.0, "hopeless model was retried again"
+    pipeline._THINKING_HOPELESS.clear()
+    print("hopeless-model fast-path OK (no repeated retries)")
 
     # …but a scene that stays reasoning-only still raises (prose is essential)
     story_t = StoryProject(name="t", storyboard_text="# Title\nT\n",

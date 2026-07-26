@@ -96,6 +96,22 @@ def _run(
 # later calls don't fail-and-retry every single time
 _THINKING_FLOOR: dict[str, int] = {}
 _THINKING_MITIGATE: set = set()
+# (section, backend, url, model) combos where even the full-context retry
+# produced only reasoning — retrying again would just waste minutes per scene
+_THINKING_HOPELESS: set = set()
+
+
+def _model_key(cfg: SectionConfig, section: str) -> tuple:
+    return (section, cfg.backend, cfg.base_url, cfg.model)
+
+
+def reset_thinking_state() -> None:
+    """Forget what was learned about thinking models (bigger budgets, needed
+    mitigations, hopeless combos). Called when the user explicitly asks for a
+    single generation again, so an manual retry always gets a real attempt."""
+    _THINKING_FLOOR.clear()
+    _THINKING_MITIGATE.clear()
+    _THINKING_HOPELESS.clear()
 
 # Qwen's soft switch to disable thinking, plus a model-agnostic instruction;
 # harmless for models that don't know the tag
@@ -126,6 +142,12 @@ def _run_with_thinking_retry(
     """Like _run, but when a thinking model spends its whole budget on hidden
     reasoning, retry with a bigger Max tokens AND anti-loop measures — and
     remember the whole fix for this section for the rest of the session."""
+    if _model_key(cfg, section) in _THINKING_HOPELESS:
+        # proven earlier this session: this model only produces reasoning for
+        # this task, even with the whole context — don't waste minutes again
+        raise backends.ReasoningOnlyError(
+            "This model produces only 'thinking' for this task no matter the "
+            "token budget — switch this section to a non-thinking model.")
     floor = _THINKING_FLOOR.get(section, 0)
     if floor > cfg.params.max_tokens:
         cfg = SectionConfig.from_dict(cfg.to_dict())
@@ -157,13 +179,22 @@ def _run_with_thinking_retry(
             # last chance: give it every remaining token of the context
             room = cfg.context_length - estimate_tokens(system + retry_user) - 256
             if room <= bigger.params.max_tokens:
+                _THINKING_HOPELESS.add(_model_key(cfg, section))
                 raise
             final = SectionConfig.from_dict(bigger.to_dict())
             final.params.max_tokens = int(room)
             applog.log(section, (
                 "still only reasoning — one last try with the entire "
                 f"remaining context (max_tokens={int(room)})"))
-            text = _run(final, section, system, retry_user, cancel, on_chunk)
+            try:
+                text = _run(final, section, system, retry_user, cancel, on_chunk)
+            except backends.ReasoningOnlyError:
+                _THINKING_HOPELESS.add(_model_key(cfg, section))
+                applog.log(section, (
+                    "model produced only reasoning even with the entire "
+                    "context — marking it hopeless for this task; further "
+                    "calls skip the retries (switch to a non-thinking model)"))
+                raise
             bigger = final
         _THINKING_FLOOR[section] = bigger.params.max_tokens
         _THINKING_MITIGATE.add(section)

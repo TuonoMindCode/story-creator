@@ -32,6 +32,9 @@ class WriteBridge(QObject):
     scene_started = Signal(int)
     scene_chunk = Signal(int, str)
     scene_done = Signal(int)
+    summary_started = Signal(int)
+    summary_chunk = Signal(int, str)
+    summary_done = Signal(int)
 
 
 class PromptViewer(QDialog):
@@ -70,6 +73,8 @@ class WriterTab(QWidget):
         self._loading = False
         self._streaming_index: int | None = None
         self._stream_buffer = ""  # full text streamed so far for that scene
+        self._summarizing_index: int | None = None
+        self._summary_buffer = ""  # summary text (incl. thinking) so far
 
         lay = QVBoxLayout(self)
         self.header = QLabel("No story project — start one from the Storyboards tab.")
@@ -185,14 +190,21 @@ class WriterTab(QWidget):
         # switching back to the scene that is streaming right now: show
         # everything streamed so far, and keep appending from there
         text = self._stream_buffer if row == self._streaming_index else scene.text
+        summarizing = row == self._summarizing_index
         self._loading = True
         self.editor.setPlainText(text)
         cursor = self.editor.textCursor()
         cursor.movePosition(QTextCursor.End)
         self.editor.setTextCursor(cursor)
-        self.summary_edit.setPlainText(scene.summary)
+        self.summary_edit.setPlainText(
+            self._summary_buffer if summarizing else scene.summary)
+        if summarizing:
+            cursor = self.summary_edit.textCursor()
+            cursor.movePosition(QTextCursor.End)
+            self.summary_edit.setTextCursor(cursor)
         self._loading = False
-        status = "writing…" if row == self._streaming_index else scene.status
+        status = ("writing…" if row == self._streaming_index
+                  else "summarizing…" if summarizing else scene.status)
         self.scene_label.setText(
             f"Scene {row + 1}: {scene.title}   [{status}]")
         self._update_counter(text)
@@ -221,7 +233,8 @@ class WriterTab(QWidget):
             return
         story = self.state.project
         row = self.list.currentRow()
-        if row == self._streaming_index:
+        # never save the live view (scene prose or streaming summary) as edits
+        if row == self._streaming_index or row == self._summarizing_index:
             return
         if story is None or not (0 <= row < len(story.scenes)):
             return
@@ -256,6 +269,7 @@ class WriterTab(QWidget):
         self.btn_stop.setEnabled(busy)
         if not busy:
             self._streaming_index = None
+            self._summarizing_index = None
 
     # -- generation --------------------------------------------------------------
 
@@ -264,7 +278,48 @@ class WriterTab(QWidget):
         bridge.scene_started.connect(self._on_scene_started)
         bridge.scene_chunk.connect(self._on_scene_chunk)
         bridge.scene_done.connect(self._on_scene_done)
+        bridge.summary_started.connect(self._on_summary_started)
+        bridge.summary_chunk.connect(self._on_summary_chunk)
+        bridge.summary_done.connect(self._on_summary_done)
         return bridge
+
+    # -- live summary view (shows thinking too, so it is never a blank wait) ----
+
+    def _on_summary_started(self, index: int):
+        self._summarizing_index = index
+        self._summary_buffer = ""
+        self._loading = True
+        self.list.setCurrentRow(index)
+        self.summary_edit.clear()
+        self._loading = False
+        story = self.state.project
+        if story and 0 <= index < len(story.scenes):
+            self.scene_label.setText(
+                f"Scene {index + 1}: {story.scenes[index].title}   [summarizing…]")
+
+    def _on_summary_chunk(self, index: int, piece: str):
+        if index == self._summarizing_index:
+            self._summary_buffer += piece
+        if index != self.list.currentRow():
+            return
+        self._loading = True
+        cursor = self.summary_edit.textCursor()
+        cursor.movePosition(QTextCursor.End)
+        cursor.insertText(piece)
+        self.summary_edit.setTextCursor(cursor)
+        self._loading = False
+
+    def _on_summary_done(self, index: int):
+        self._summarizing_index = None
+        self._summary_buffer = ""
+        story = self.state.project
+        if story and 0 <= index < len(story.scenes) and index == self.list.currentRow():
+            scene = story.scenes[index]
+            self._loading = True
+            self.summary_edit.setPlainText(scene.summary)
+            self._loading = False
+            self.scene_label.setText(
+                f"Scene {index + 1}: {scene.title}   [{scene.status}]")
 
     def _on_scene_started(self, index: int):
         story = self.state.project
@@ -343,10 +398,13 @@ class WriterTab(QWidget):
                             if worker.cancel.is_set():
                                 return None
                             worker.progress.emit(f"Summarizing scene {i + 1}…")
+                            bridge.summary_started.emit(i)
                             prev.summary = pipeline.generate_summary(
                                 cfg_summ, prev.text, language=language,
-                                cancel=worker.cancel)
+                                cancel=worker.cancel,
+                                on_chunk=lambda p, k=i: bridge.summary_chunk.emit(k, p))
                             prev.summary_stale = False
+                            bridge.summary_done.emit(i)
 
                 worker.progress.emit(
                     f"Writing scene {index + 1}/{len(story.scenes)}…")
@@ -372,9 +430,12 @@ class WriterTab(QWidget):
                     break
                 if context_mode != "full" and scene.text.strip():
                     worker.progress.emit(f"Summarizing scene {index + 1}…")
+                    bridge.summary_started.emit(index)
                     scene.summary = pipeline.generate_summary(
                         cfg_summ, scene.text, language=language,
-                        cancel=worker.cancel)
+                        cancel=worker.cancel,
+                        on_chunk=lambda p, k=index: bridge.summary_chunk.emit(k, p))
+                    bridge.summary_done.emit(index)
                 story.save()
                 bridge.scene_done.emit(index)
             return True
@@ -428,6 +489,9 @@ class WriterTab(QWidget):
             return
         cfg = self.state.runtime_cfg("summarizer").rolled()
         language = self.state.ui.get("story_language", "English")
+        # an explicit user request always gets a real attempt, even if this
+        # model gave up on summaries earlier in the session
+        pipeline.reset_thinking_state()
         self._loading = True
         self.summary_edit.clear()
         self._loading = False

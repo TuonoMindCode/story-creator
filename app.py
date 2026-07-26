@@ -33,7 +33,7 @@ from backends import (
 from project import SETTINGS_FILE, StoryProject
 from theme import apply_theme, dark_palette
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 
 class Worker(QThread):

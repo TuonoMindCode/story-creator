@@ -117,6 +117,7 @@ def main_test():
     main.tab_log.opt_checks["prompts_scene"].setChecked(True)
 
     writer_saw_text = []
+    summary_saw_text = []
     outline_saw_scenes = []
     outline_saw_stream = []
     switch_checked = False
@@ -141,6 +142,8 @@ def main_test():
             switch_checked = True
         if main.tab_writer.editor.toPlainText():
             writer_saw_text.append(len(main.tab_writer.editor.toPlainText()))
+        if wt._summarizing_index is not None and wt.summary_edit.toPlainText():
+            summary_saw_text.append(len(wt.summary_edit.toPlainText()))
         if main.tab_outline.list.count():
             outline_saw_scenes.append(main.tab_outline.list.count())
         if main.tab_outline.raw_view.toPlainText():
@@ -181,6 +184,8 @@ def main_test():
     assert "forced window" in main.tab_writer.summary_edit.toPlainText(), \
         "scene summary not shown in the writer tab"
     assert switch_checked, "mid-stream scene switch was never exercised"
+    assert summary_saw_text, \
+        "scene summaries never streamed into the summary box during the batch"
     # newest story first in the Complete Story list
     listed_now = prj.list_projects()
     assert listed_now and listed_now[0] in new_projects, \
