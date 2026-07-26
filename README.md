@@ -11,7 +11,7 @@ I've reached the Fable 5 limit. I'll try to fix it later, but it's most likely n
 
 The rest of the readme is created by Claude. 
 
-![Story Start tab](story-start.PNG)
+![Story Start tab](story-start02.PNG)
 
 Cross-platform (Windows/Linux/Mac) PySide6 desktop app that writes long,
 multi-scene stories with **local LLMs**. Because local models typically produce
@@ -124,6 +124,14 @@ not help — pip's PySide6 bundles its own Qt.
     size. Opt-in detail checkboxes (scene summaries, each section's full
     prompts, full responses) for debugging bad stories. Size-capped
     (configurable, oldest half dropped automatically).
+
+### Detailed Builder tab
+
+![Detailed Builder tab](detailed-builder.PNG)
+
+### Prompts tab
+
+![Prompts tab](prompts.PNG)
 
 ## Tested models
 
