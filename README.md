@@ -224,4 +224,3 @@ touch your real settings, stories, or servers.
 Questions, bug reports or suggestions are welcome:
 
 - **Email:** tuonomindcode [at] bahnhof [dot] se
-- **GitHub issues:** https://github.com/TuonoMindCode/story-creator/issues
