@@ -438,6 +438,7 @@ class WriterTab(QWidget):
                     if added:
                         applog.log("cast", f"scene {index + 1}: +{added} "
                                    f"character(s) — now {len(story.cast)} tracked")
+                        self.state.cast_changed.emit()
                 if context_mode != "full" and scene.text.strip():
                     worker.progress.emit(f"Summarizing scene {index + 1}…")
                     bridge.summary_started.emit(index)

@@ -39,6 +39,7 @@ class LorebookTab(QWidget):
         left = QWidget()
         ll = QVBoxLayout(left)
         ll.setContentsMargins(0, 0, 0, 0)
+        ll.addWidget(QLabel("Lorebook entries (saved with the storyboard)"))
         self.list = QListWidget()
         self.list.currentRowChanged.connect(self._selected)
         ll.addWidget(self.list, 1)
@@ -50,6 +51,29 @@ class LorebookTab(QWidget):
         self.btn_import.clicked.connect(self._import_characters)
         for b in (btn_add, btn_del, self.btn_import):
             ll.addWidget(b)
+
+        # characters the app noted while writing the current story — visible so
+        # you can see what the scenes are being told, and fix or keep any of it
+        ll.addWidget(QLabel("Characters tracked in the current story (automatic)"))
+        self.cast_list = QListWidget()
+        self.cast_list.setToolTip(
+            "Filled in after each scene when 'Track characters automatically' is "
+            "on (Story Start tab). These are sent to every later scene so names, "
+            "roles and genders stay fixed. They live with this story only.")
+        self.cast_list.currentRowChanged.connect(self._cast_selected)
+        ll.addWidget(self.cast_list, 1)
+        cast_row = QHBoxLayout()
+        self.btn_cast_keep = QPushButton("Copy to Lorebook")
+        self.btn_cast_keep.setToolTip(
+            "Save this tracked character as a permanent lorebook entry, so every "
+            "future story from this storyboard gets it too.")
+        self.btn_cast_keep.clicked.connect(self._promote_cast_entry)
+        self.btn_cast_del = QPushButton("Forget")
+        self.btn_cast_del.setToolTip("Remove a wrongly detected character.")
+        self.btn_cast_del.clicked.connect(self._forget_cast_entry)
+        cast_row.addWidget(self.btn_cast_keep)
+        cast_row.addWidget(self.btn_cast_del)
+        ll.addLayout(cast_row)
         splitter.addWidget(left)
 
         right = QWidget()
@@ -79,6 +103,8 @@ class LorebookTab(QWidget):
         self.always_check.toggled.connect(self._field_changed)
 
         self.state.storyboards_changed.connect(self.refresh)
+        self.state.project_changed.connect(self.refresh_cast)
+        self.state.cast_changed.connect(self.refresh_cast)
         self.state.busy_changed.connect(lambda b: self.btn_import.setEnabled(not b))
         self.refresh()
 
@@ -91,6 +117,63 @@ class LorebookTab(QWidget):
             f"Lorebook for storyboard: {name}" if name
             else "Lorebook — select a storyboard in the Storyboards tab first.")
         self._reload_list()
+        self.refresh_cast()
+
+    # -- automatically tracked cast of the current story ------------------------
+
+    def refresh_cast(self):
+        story = self.state.project
+        cast = story.cast if story else {}
+        self.cast_list.blockSignals(True)
+        self.cast_list.clear()
+        for person, desc in cast.items():
+            self.cast_list.addItem(f"{person} — {desc}")
+        self.cast_list.blockSignals(False)
+        has = bool(cast)
+        self.btn_cast_keep.setEnabled(has)
+        self.btn_cast_del.setEnabled(has)
+        if not has and story is not None:
+            self.cast_list.addItem(
+                "(nothing tracked yet — filled in as scenes are written)")
+
+    def _cast_name(self) -> str:
+        story = self.state.project
+        row = self.cast_list.currentRow()
+        names = list(story.cast) if story else []
+        return names[row] if 0 <= row < len(names) else ""
+
+    def _cast_selected(self, _row: int):
+        pass  # selection alone changes nothing; the buttons act on it
+
+    def _promote_cast_entry(self):
+        story = self.state.project
+        person = self._cast_name()
+        if not story or not person:
+            return
+        if not self.state.selected_storyboard:
+            self.main.statusBar().showMessage(
+                "Select a storyboard first — lorebook entries are saved with it.")
+            return
+        if any(e.name.strip().lower() == person.lower() for e in self.entries):
+            self.main.statusBar().showMessage(f"'{person}' is already in the lorebook.")
+            return
+        self.entries.append(LorebookEntry(
+            name=person, keywords=[person], content=story.cast[person],
+            always_include=True))
+        self._save()
+        self._reload_list()
+        self.main.statusBar().showMessage(
+            f"'{person}' copied to the lorebook — every future story from this "
+            "storyboard will include it.")
+
+    def _forget_cast_entry(self):
+        story = self.state.project
+        person = self._cast_name()
+        if story and person:
+            story.cast.pop(person, None)
+            self.state.autosave_project()
+            self.refresh_cast()
+            self.main.statusBar().showMessage(f"Stopped tracking '{person}'.")
 
     def _reload_list(self):
         self._loading = True

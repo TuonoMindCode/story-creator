@@ -469,6 +469,21 @@ def test_ui_builds():
     assert not ts.free_panel.isHidden()
     assert ts.file_panel.isHidden() and ts.board_panel.isHidden()
 
+    # the lorebook tab shows the story's automatically tracked cast
+    story_lb = StoryProject(name="lb-test", storyboard_text="# Title\nT\n",
+                            scenes=[Scene(title="One", beat="b")])
+    story_lb.cast["Liam Reyes"] = "hiring manager, male"
+    win.state.project = story_lb
+    win.state.selected_storyboard = ""
+    win.tab_lorebook.refresh_cast()
+    assert win.tab_lorebook.cast_list.count() == 1
+    assert "Liam Reyes" in win.tab_lorebook.cast_list.item(0).text()
+    # forgetting a wrongly detected character removes it
+    win.tab_lorebook.cast_list.setCurrentRow(0)
+    win.tab_lorebook._forget_cast_entry()
+    assert story_lb.cast == {}
+    win.state.project = None
+
     # quick setup applies a preset combination to all four sections
     win.state.sections["planner"].params.max_tokens = 1536
     win.tab_prompts._quick_setup_clicked(1)  # "Detailed & faithful"

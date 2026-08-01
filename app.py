@@ -74,6 +74,7 @@ class AppState(QObject):
     project_changed = Signal()          # new/loaded project (outline included)
     outline_changed = Signal()
     scene_updated = Signal(int)         # scene index whose text/status changed
+    cast_changed = Signal()             # tracked characters of the story changed
     busy_changed = Signal(bool)
     status_message = Signal(str)
     queue_changed = Signal()            # batch queue contents changed

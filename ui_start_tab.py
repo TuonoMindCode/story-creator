@@ -872,7 +872,8 @@ class StartTab(QWidget):
                         found = pipeline.generate_cast_update(
                             cfg_summ, scene.text, story.cast,
                             cancel=worker.cancel)
-                        pipeline.merge_cast(story, found)
+                        if pipeline.merge_cast(story, found):
+                            self.state.cast_changed.emit()
                     if (spec.context_mode != "full" and k < len(story.scenes) - 1
                             and scene.text.strip()):
                         worker.progress.emit(f"{label} — summarizing scene {k + 1}…")
