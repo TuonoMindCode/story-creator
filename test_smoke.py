@@ -297,6 +297,19 @@ def test_full_context_mode():
     print("full-context mode OK")
 
 
+def test_strip_scene_artifacts():
+    f = pipeline.strip_scene_artifacts
+    assert f("# Scene 4\n\nThe rain fell.", "The Interview") == "The rain fell."
+    assert f("Scene 4: The Interview\nThe rain fell.", "The Interview") == "The rain fell."
+    assert f("---\n\nThe rain fell.\n\n---", "X") == "The rain fell."
+    assert f("**The Interview**\n\nThe rain fell.", "The Interview") == "The rain fell."
+    # real prose must never be touched
+    keep = "Scene of the crime, she thought. The rain fell."
+    assert f(keep, "The Interview") == keep
+    assert f("The rain fell.\n\nShe left.", "X") == "The rain fell.\n\nShe left."
+    print("scene artifact stripping OK")
+
+
 def test_language_option():
     from backends import SectionConfig
     cfg = SectionConfig()
@@ -421,6 +434,7 @@ if __name__ == "__main__":
     test_param_ranges()
     test_full_context_mode()
     test_language_option()
+    test_strip_scene_artifacts()
     test_log_trim()
     test_infinite_spin()
     test_strip_think()

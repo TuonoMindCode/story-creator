@@ -523,6 +523,26 @@ def context_report(
     return short, "\n".join(detail_lines)
 
 
+_LEAKED_HEADING_RE = re.compile(
+    r"^\s*(?:#{1,6}\s*)?(?:scene\s*\d+\b[^\n]*|chapter\s*\d+\b[^\n]*)\n+",
+    re.IGNORECASE)
+
+
+def strip_scene_artifacts(text: str, title: str = "") -> str:
+    """Remove formatting the model leaks around the prose: a leading
+    'Scene 4' / '# Scene 4: Title' heading, the scene title on its own line,
+    and horizontal rules used as separators."""
+    out = text.strip()
+    out = _LEAKED_HEADING_RE.sub("", out, count=1)
+    if title.strip():
+        head_re = re.compile(
+            r"^\s*(?:#{1,6}\s*)?\**\s*" + re.escape(title.strip()) + r"\s*\**\s*\n+")
+        out = head_re.sub("", out, count=1)
+    out = re.sub(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*\n+", "", out, count=1)
+    out = re.sub(r"\n+\s*(?:-{3,}|\*{3,}|_{3,})\s*$", "", out, count=1)
+    return out.strip()
+
+
 def generate_scene(
     cfg: SectionConfig,
     project: StoryProject,
@@ -542,8 +562,9 @@ def generate_scene(
             "language of the prose changes — still follow every other rule "
             "and the style guide."
         )
-    return _run_with_thinking_retry(cfg, "scene", system, user,
+    text = _run_with_thinking_retry(cfg, "scene", system, user,
                                     cancel, on_chunk).strip()
+    return strip_scene_artifacts(text, project.scenes[index].title)
 
 
 def generate_summary(

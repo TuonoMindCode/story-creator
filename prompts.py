@@ -117,7 +117,13 @@ _DEFAULT = {
             "- Do not summarize events, do not skip ahead, and do not end the whole "
             "story unless this is the final scene.\n"
             "- End the scene at a natural stopping point.\n"
-            "- Output only story prose — no headings, no scene numbers, no notes."
+            "- Output only story prose — no headings, no scene numbers, no notes.\n"
+            "- Never paste documents into the story. Job adverts, emails, "
+            "letters, contracts, forms, screens and lists must be rendered the "
+            "way novels do it: through the character reading them — the one "
+            "phrase that stings quoted, the rest carried by her reaction and "
+            "what she thinks about it. No markdown, no bullet lists, no bold "
+            "or italic labels, no field names like 'Subject:' or 'Salary:'."
         ),
         "user": (
             "THE STORY SO FAR (scene summaries):\n{summaries}\n\n"
@@ -225,7 +231,9 @@ _GEMMA = {
         "user": _DEFAULT["scene"]["user"]
         + (
             "\n\nImportant: write only scene {scene_number} of {num_scenes}, about "
-            "{target_length} words, prose only, and stop at a natural scene ending."
+            "{target_length} words, prose only, and stop at a natural scene ending. "
+            "Do not paste documents, emails or lists as formatted blocks — show "
+            "them through the character reading them, in plain prose."
         ),
     },
     "summary": {
