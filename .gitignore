@@ -1,6 +1,6 @@
 # --- user data & generated content (never commit) ---
 settings.json
-settings.test.json
+settings.*.json
 story-creator.log
 *.log
 story-descriptions/
