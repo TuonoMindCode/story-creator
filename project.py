@@ -188,13 +188,22 @@ class Scene:
     summary_stale: bool = False
 
     def outline_block(self, number: int) -> str:
-        return (
-            f"SCENE {number}: {self.title}\n"
-            f"LOCATION: {self.location}\n"
-            f"CHARACTERS: {self.characters}\n"
-            f"WHAT HAPPENS: {self.beat}\n"
-            f"PURPOSE: {self.purpose}"
-        )
+        """The scene's plan as sent to the writer; empty fields are omitted so
+        the prompt never contains bare labels like 'CHARACTERS:'."""
+        lines = [f"SCENE {number}: {self.title}".rstrip()]
+        for label, value in (("LOCATION", self.location),
+                             ("CHARACTERS", self.characters),
+                             ("WHAT HAPPENS", self.beat),
+                             ("PURPOSE", self.purpose)):
+            value = (value or "").strip()
+            if not value:
+                continue
+            # a field may already carry its own label (unparsed outline text)
+            if value.upper().startswith(label + ":"):
+                lines.append(value)
+            else:
+                lines.append(f"{label}: {value}")
+        return "\n".join(lines)
 
     def to_dict(self) -> dict:
         return asdict(self)

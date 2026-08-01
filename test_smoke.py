@@ -297,6 +297,21 @@ def test_full_context_mode():
     print("full-context mode OK")
 
 
+def test_outline_block():
+    s = Scene(title="The Deficit Report", beat="She counts what is left.")
+    block = s.outline_block(3)
+    assert "SCENE 3: The Deficit Report" in block
+    assert "WHAT HAPPENS: She counts what is left." in block
+    assert "CHARACTERS" not in block, "empty fields must be omitted"
+    assert "PURPOSE" not in block, "empty fields must be omitted"
+    # a field that already carries its label must not be doubled
+    s2 = Scene(title="X", beat="WHAT HAPPENS: She leaves.", purpose="To end it.")
+    b2 = s2.outline_block(1)
+    assert "WHAT HAPPENS: WHAT HAPPENS" not in b2, b2
+    assert "PURPOSE: To end it." in b2
+    print("outline block formatting OK")
+
+
 def test_strip_scene_artifacts():
     f = pipeline.strip_scene_artifacts
     assert f("# Scene 4\n\nThe rain fell.", "The Interview") == "The rain fell."
@@ -434,6 +449,7 @@ if __name__ == "__main__":
     test_param_ranges()
     test_full_context_mode()
     test_language_option()
+    test_outline_block()
     test_strip_scene_artifacts()
     test_log_trim()
     test_infinite_spin()

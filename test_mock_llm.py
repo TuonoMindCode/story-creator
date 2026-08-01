@@ -73,7 +73,10 @@ def pick_response(system: str, user: str) -> str:
         return MOCK_OUTLINE
     if "summarize the following scene" in blob:
         return MOCK_SUMMARY
-    if "now write scene" in blob:
+    # match several phrasings so prompt rewording doesn't silently turn scene
+    # requests into storyboard responses
+    if ("write scene" in blob or "now write scene" in blob
+            or "write the full prose" in blob):
         return MOCK_SCENE
     return MOCK_STORYBOARD
 
