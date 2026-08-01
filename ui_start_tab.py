@@ -53,7 +53,7 @@ class BatchSpec:
     count: int = 1
     num_scenes: int = 6
     target_length: int = 900
-    context_mode: str = "summaries"
+    context_mode: str = "prev_full"
     language: str = "English"
     plan_in_language: bool = False
     cfg_board: SectionConfig = field(default_factory=SectionConfig)
@@ -243,25 +243,44 @@ class StartTab(QWidget):
             lambda v: self.state.ui.__setitem__("target_length", int(v)))
 
         sg.addWidget(QLabel("Context between scenes:"), 1, 0)
-        self.ctx_summaries = QRadioButton("Summarize previous scenes (recommended)")
-        self.ctx_full = QRadioButton("Send full text of all previous scenes (no summaries)")
-        if self.state.ui.get("context_mode", "summaries") == "full":
+        self.ctx_summaries = QRadioButton(
+            "Summaries of previous scenes + the ending of the last one (cheapest)")
+        self.ctx_prev_full = QRadioButton(
+            "Summaries of older scenes + the LAST SCENE IN FULL (recommended — "
+            "best natural continuation)")
+        self.ctx_full = QRadioButton(
+            "Full text of all previous scenes (no summaries — heaviest)")
+        self.ctx_summaries.setToolTip(
+            "Scene 5 gets: summaries of scenes 1-4 + the last ~500 tokens of scene 4.")
+        self.ctx_prev_full.setToolTip(
+            "Scene 5 gets: summaries of scenes 1-3 + the complete text of scene 4, "
+            "so the new scene can pick up naturally from everything that just "
+            "happened — not only from the final paragraph.")
+        self.ctx_full.setToolTip(
+            "Scene 5 gets: the complete text of scenes 1-4. Most faithful, but "
+            "runs out of context after a few scenes.")
+        mode = self.state.ui.get("context_mode", "prev_full")
+        if mode == "full":
             self.ctx_full.setChecked(True)
-        else:
+        elif mode == "summaries":
             self.ctx_summaries.setChecked(True)
+        else:
+            self.ctx_prev_full.setChecked(True)
         sg.addWidget(self.ctx_summaries, 1, 1, 1, 3)
-        sg.addWidget(self.ctx_full, 2, 1, 1, 3)
-        self.ctx_summaries.toggled.connect(self._ctx_mode_changed)
+        sg.addWidget(self.ctx_prev_full, 2, 1, 1, 3)
+        sg.addWidget(self.ctx_full, 3, 1, 1, 3)
+        for rb in (self.ctx_summaries, self.ctx_prev_full, self.ctx_full):
+            rb.toggled.connect(self._ctx_mode_changed)
         ctx_hint = (
-            "Token budget: storyboard + style guide + lorebook + context of "
+            "\n\nToken budget: storyboard + style guide + lorebook + context of "
             "earlier scenes + the Scene Writer's Max tokens (reply reserve) must "
-            "fit in the server's context length (LLM Settings). Default "
-            "summaries are ≈170 tok/scene, Detailed-Summary ≈340, full scenes "
-            "≈1300+ — the Scene Writer tab shows the live budget per scene.")
-        for w in (self.ctx_summaries, self.ctx_full):
-            w.setToolTip(ctx_hint)
+            "fit in the server's context length (LLM Settings). Summaries are "
+            "≈170 tok/scene, Detailed-Summary ≈340, a full scene ≈1300+ — the "
+            "Scene Writer tab shows the live budget per scene.")
+        for w in (self.ctx_summaries, self.ctx_prev_full, self.ctx_full):
+            w.setToolTip(w.toolTip() + ctx_hint)
 
-        sg.addWidget(QLabel("Story language:"), 3, 0)
+        sg.addWidget(QLabel("Story language:"), 4, 0)
         self.language_box = QComboBox()
         self.language_box.setEditable(True)
         self.language_box.addItems([
@@ -272,12 +291,12 @@ class StartTab(QWidget):
         self.language_box.setToolTip(
             "The Scene Writer (and scene summaries) write in this language. "
             "You can type any language.")
-        sg.addWidget(self.language_box, 3, 1)
+        sg.addWidget(self.language_box, 4, 1)
         self.plan_lang_check = QCheckBox(
             "Also write storyboard && outline in this language "
             "(English planning recommended — most models plan best in English)")
         self.plan_lang_check.setChecked(bool(self.state.ui.get("plan_in_language", False)))
-        sg.addWidget(self.plan_lang_check, 3, 2, 1, 2)
+        sg.addWidget(self.plan_lang_check, 4, 2, 1, 2)
         self.language_box.editTextChanged.connect(
             lambda t: self.state.ui.__setitem__("story_language", t.strip() or "English"))
         self.plan_lang_check.toggled.connect(
@@ -530,8 +549,13 @@ class StartTab(QWidget):
         return self.concept_edit.toPlainText().strip()
 
     def _ctx_mode_changed(self):
-        self.state.ui["context_mode"] = (
-            "summaries" if self.ctx_summaries.isChecked() else "full")
+        if self.ctx_full.isChecked():
+            mode = "full"
+        elif self.ctx_summaries.isChecked():
+            mode = "summaries"
+        else:
+            mode = "prev_full"
+        self.state.ui["context_mode"] = mode
 
     def sync_section_widgets(self):
         for w in self.section_widgets.values():
@@ -632,7 +656,7 @@ class StartTab(QWidget):
             count=self.batch_spin.value(),
             num_scenes=self.scenes_spin.value(),
             target_length=self.length_spin.value(),
-            context_mode=self.state.ui.get("context_mode", "summaries"),
+            context_mode=self.state.ui.get("context_mode", "prev_full"),
             language=self.state.ui.get("story_language", "English"),
             plan_in_language=bool(self.state.ui.get("plan_in_language", False)),
             cfg_board=self.state.runtime_cfg("storyboard"),

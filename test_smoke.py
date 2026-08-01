@@ -270,6 +270,30 @@ def test_full_context_mode():
     assert "scene two text" in user_full, "previous scene's full text missing"
     assert "previous scene appears in full above" in user_full, \
         "full-mode tail note missing"
+
+    # prev_full: summaries of OLDER scenes + the previous scene complete
+    _, user_pf = pipeline.build_scene_prompts(cfg, story, 2, [],
+                                              context_mode="prev_full")
+    assert "short summary one" in user_pf, "older scene summary missing"
+    assert "short summary two" not in user_pf, \
+        "previous scene should appear in full, not as a summary too"
+    assert "scene two text" in user_pf, "previous scene full text missing"
+    assert "FULL SCENE ONE TEXT HERE." not in user_pf, \
+        "older scenes must stay summarized in prev_full mode"
+
+    # scene 2 in prev_full mode: nothing older to summarize, scene 1 in full
+    story2 = StoryProject(
+        name="t3", storyboard_text="# Title\nT\n",
+        scenes=[Scene(title="One", beat="b1", text="ONE FULL TEXT",
+                      summary="sum one"),
+                Scene(title="Two", beat="b2")])
+    _, user_pf2 = pipeline.build_scene_prompts(cfg, story2, 1, [],
+                                               context_mode="prev_full")
+    assert "ONE FULL TEXT" in user_pf2
+    assert "nothing earlier to summarize" in user_pf2, \
+        "wrong placeholder when only the previous scene exists"
+    assert "this is the first scene" not in user_pf2, \
+        "scene 2 must not be told it is the first scene"
     print("full-context mode OK")
 
 

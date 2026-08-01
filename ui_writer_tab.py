@@ -258,7 +258,7 @@ class WriterTab(QWidget):
                     if story.storyboard_name else [])
         short, detail = pipeline.context_report(
             cfg, story, row, lorebook,
-            context_mode=self.state.ui.get("context_mode", "summaries"))
+            context_mode=self.state.ui.get("context_mode", "prev_full"))
         self.budget_label.setText(short)
         self.budget_label.setToolTip(detail)
 
@@ -372,7 +372,7 @@ class WriterTab(QWidget):
         # roll min/max ranges once for this job — stable across its scenes
         cfg_write = self.state.runtime_cfg("writer").rolled()
         cfg_summ = self.state.runtime_cfg("summarizer").rolled()
-        context_mode = self.state.ui.get("context_mode", "summaries")
+        context_mode = self.state.ui.get("context_mode", "prev_full")
         language = self.state.ui.get("story_language", "English")
         story.gen_info.setdefault("writer", {})
         story.gen_info["writer"] = {"backend": cfg_write.backend,

@@ -2,6 +2,7 @@
 
 Run with:  python test_ui_stream.py
 """
+import atexit
 import os
 import sys
 import threading
@@ -49,6 +50,18 @@ def main_test():
         cfg.model = "mock-model"
 
     before_boards = set(prj.list_storyboards())
+
+    # Remove everything this run creates even if an assertion fails partway —
+    # otherwise failed runs leave mock stories in the user's folders.
+    baseline_projects = set(prj.list_projects())
+
+    @atexit.register
+    def _cleanup_artifacts():
+        for name in set(prj.list_projects()) - baseline_projects:
+            (prj.PROJECTS_DIR / f"{name}.json").unlink(missing_ok=True)
+        for name in set(prj.list_storyboards()) - before_boards:
+            prj.delete_storyboard(name)
+        test_settings.unlink(missing_ok=True)
 
     # --- single storyboard creation must stream into the Storyboard tab ------
     main.tab_start.concept_edit.setPlainText("a detective story")
@@ -117,7 +130,18 @@ def main_test():
     main.tab_log.opt_checks["prompts_scene"].setChecked(True)
 
     writer_saw_text = []
+    # the mock server delivers a whole summary inside one event-loop pass, so
+    # polling can miss it — observe the handler itself instead
     summary_saw_text = []
+    wt = main.tab_writer
+    _orig_summary_chunk = wt._on_summary_chunk
+
+    def _summary_chunk_probe(i, piece):
+        _orig_summary_chunk(i, piece)
+        if wt._summarizing_index == i:
+            summary_saw_text.append(len(wt.summary_edit.toPlainText()))
+
+    wt._on_summary_chunk = _summary_chunk_probe
     outline_saw_scenes = []
     outline_saw_stream = []
     switch_checked = False
@@ -142,8 +166,6 @@ def main_test():
             switch_checked = True
         if main.tab_writer.editor.toPlainText():
             writer_saw_text.append(len(main.tab_writer.editor.toPlainText()))
-        if wt._summarizing_index is not None and wt.summary_edit.toPlainText():
-            summary_saw_text.append(len(wt.summary_edit.toPlainText()))
         if main.tab_outline.list.count():
             outline_saw_scenes.append(main.tab_outline.list.count())
         if main.tab_outline.raw_view.toPlainText():
@@ -186,6 +208,8 @@ def main_test():
     assert switch_checked, "mid-stream scene switch was never exercised"
     assert summary_saw_text, \
         "scene summaries never streamed into the summary box during the batch"
+    assert summary_saw_text[0] < summary_saw_text[-1] or len(summary_saw_text) > 1, \
+        "summary box did not grow while the summary streamed"
     # newest story first in the Complete Story list
     listed_now = prj.list_projects()
     assert listed_now and listed_now[0] in new_projects, \

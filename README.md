@@ -82,7 +82,7 @@ not help — pip's PySide6 bundles its own Qt.
    for all scenes of a story; min = max for fixed) · KoboldCpp extras
    (smoothing factor, TFS, Typical P, Top A) · number of scenes, target words
    per scene · story language (prose in Svenska/… while planning stays in
-   English) · context mode (summaries vs full scenes) · **batch runs**.
+   English) · context mode (see below) · **batch runs**.
 2. **Detailed Builder** — compose a detailed story description with radio
    options (genre, tone, POV, rating, dialogue amount, pacing, detail level,
    prose style, humor, emotional depth, violence, romance, ending) and save it
@@ -169,10 +169,26 @@ match what the server was started with, e.g. `llama-server -c 8192`). The
 app trims automatically (previous-scene ending first, then oldest summaries
 get merged).
 
+### Context between scenes
+
+Three options on the Story Start tab, cheapest to heaviest:
+
+| Mode | What scene 5 receives | Cost |
+|------|----------------------|------|
+| **Summaries + ending** | summaries of scenes 1-4 + last ~500 tokens of scene 4 | ~170 tok/scene |
+| **Summaries + last scene in full** *(default)* | summaries of scenes 1-3 + **all of scene 4** | ~170/scene + ~1600 |
+| **All scenes in full** | complete text of scenes 1-4 | ~1300+/scene |
+
+The middle option is the sweet spot: the writer sees everything that actually
+happened in the scene it must continue from — not just its final paragraph —
+so scene 5 picks up naturally (she drove off → she arrives), while older
+scenes stay compact as summaries. If the budget runs out the previous scene is
+shortened to its ending first, then old summaries are merged.
+
 Rules of thumb on an 8192 context: default summaries ≈170 tok/scene,
-Detailed-Summary ≈340, full-scenes mode ≈1300+ per scene. "Detailed &
-faithful" is comfortable up to ~10-12 scenes; for longer stories use default
-summaries or start the servers with a 16384 context.
+Detailed-Summary ≈340. "Detailed & faithful" is comfortable up to ~10-12
+scenes; for longer stories use the cheapest context mode or start the servers
+with a 16384 context.
 
 Thinking models (Qwen3 etc.) are supported: their hidden reasoning streams
 live but is stripped from the story. If a model spends its whole token budget

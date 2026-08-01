@@ -121,10 +121,16 @@ _DEFAULT = {
         ),
         "user": (
             "THE STORY SO FAR (scene summaries):\n{summaries}\n\n"
-            "END OF THE PREVIOUS SCENE (verbatim, continue from this):\n"
+            "THE PREVIOUS SCENE (verbatim — continue naturally from it):\n"
             "{previous_tail}\n\n"
             "NOW WRITE SCENE {scene_number}: {scene_title}\n"
             "{scene_beat}\n\n"
+            "Open this scene connected to what just happened: let the "
+            "characters carry the immediate aftermath of the previous scene "
+            "with them — where they now are, what they are still feeling, "
+            "thinking about or dealing with — before the events of this scene "
+            "take over. Never start cold, as if the previous scene had not "
+            "happened.\n\n"
             "Write the full prose of this scene now."
         ),
     },

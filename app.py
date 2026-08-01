@@ -125,6 +125,7 @@ class AppState(QObject):
                     b.context_length = cfg.context_length
                     b.timeout = cfg.timeout
         self.ui = data.get("ui", {})
+        self.ui.setdefault("context_mode", "prev_full")
         self.ui.setdefault("num_scenes", 6)
         self.ui.setdefault("target_length", 900)
         self.ui.setdefault("theme", "dark")

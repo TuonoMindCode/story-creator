@@ -323,8 +323,9 @@ def generate_outline(
     return text, parse_outline(text)
 
 
-CONTEXT_SUMMARIES = "summaries"
-CONTEXT_FULL = "full"
+CONTEXT_SUMMARIES = "summaries"      # summaries of all earlier + tail of prev
+CONTEXT_PREV_FULL = "prev_full"      # summaries of older + FULL previous scene
+CONTEXT_FULL = "full"                # full text of every earlier scene
 
 
 def build_scene_prompts(
@@ -340,21 +341,31 @@ def build_scene_prompts(
     scene_number = index + 1
     num_scenes = len(project.scenes)
 
+    prev_text = project.scenes[index - 1].text.strip() if index > 0 else ""
     prev_tail = ""
-    if index > 0 and project.scenes[index - 1].text.strip():
-        prev_tail = tail_text(project.scenes[index - 1].text, PREV_TAIL_TOKENS)
+    if prev_text:
+        # prev_full: hand over the WHOLE previous scene so the new scene can
+        # continue naturally from what actually happened, not just its ending
+        prev_tail = (prev_text if context_mode == CONTEXT_PREV_FULL
+                     else tail_text(prev_text, PREV_TAIL_TOKENS))
 
-    # ALL previous scenes go into the context: scenes 1..k-1 as summaries (or
-    # full text in full mode). The previous scene additionally contributes its
-    # verbatim ending so the prose continues seamlessly.
+    # Earlier scenes as summaries (or full text in full mode). In prev_full
+    # mode the previous scene is skipped here — it appears in full below.
+    last_summarized = index - 1 if context_mode == CONTEXT_PREV_FULL else index
     summary_parts = []
-    for i in range(0, index):
+    for i in range(0, max(0, last_summarized)):
         s = project.scenes[i]
         if context_mode == CONTEXT_FULL and s.text.strip():
             summary_parts.append(f"Scene {i + 1} ({s.title}):\n{s.text.strip()}")
         elif s.summary.strip():
             summary_parts.append(f"Scene {i + 1} ({s.title}): {s.summary.strip()}")
-    summaries = "\n\n".join(summary_parts) if summary_parts else "(this is the first scene)"
+    if summary_parts:
+        summaries = "\n\n".join(summary_parts)
+    elif index == 0:
+        summaries = "(this is the first scene)"
+    else:
+        summaries = ("(nothing earlier to summarize — the previous scene "
+                     "appears in full below)")
     if context_mode == CONTEXT_FULL and index > 0:
         # the previous scene's full text is already above — no separate tail
         prev_tail = ""
@@ -370,11 +381,13 @@ def build_scene_prompts(
         stripped = remove_style_guide(project.storyboard_text)
         if stripped:
             board_text = stripped
-    empty_tail_note = (
-        "(the previous scene appears in full above — continue seamlessly from "
-        "its final sentence)"
-        if context_mode == CONTEXT_FULL and index > 0
-        else "(this is the first scene — start the story)")
+    if context_mode == CONTEXT_FULL and index > 0:
+        empty_tail_note = ("(the previous scene appears in full above — "
+                           "continue seamlessly from its final sentence)")
+    elif index == 0:
+        empty_tail_note = "(this is the first scene — start the story)"
+    else:
+        empty_tail_note = "(the previous scene has not been written yet)"
 
     def build(prev_tail_now: str, summaries_now: str) -> tuple[str, str]:
         values = {
@@ -402,7 +415,12 @@ def build_scene_prompts(
     budget = cfg.context_length - cfg.params.max_tokens - 256
     system, user = build(prev_tail, summaries)
 
-    # Over budget: shrink previous tail, then drop it, then trim old summaries.
+    # Over budget: shrink the previous scene step by step, then drop it, then
+    # trim old summaries. A full previous scene shrinks to its ending first.
+    if (estimate_tokens(system + user) > budget and prev_tail
+            and context_mode == CONTEXT_PREV_FULL):
+        prev_tail = tail_text(prev_tail, PREV_TAIL_TOKENS)
+        system, user = build(prev_tail, summaries)
     if estimate_tokens(system + user) > budget and prev_tail:
         system, user = build(tail_text(prev_tail, 200), summaries)
     if estimate_tokens(system + user) > budget and prev_tail:
@@ -438,7 +456,8 @@ def context_report(
     style_tok = estimate_tokens(extract_style_guide(project.storyboard_text))
     n_prev = 0
     prev_ctx_tok = 0
-    for i in range(0, index):
+    last_summarized = index - 1 if context_mode == CONTEXT_PREV_FULL else index
+    for i in range(0, max(0, last_summarized)):
         s = project.scenes[i]
         source = s.text if context_mode == CONTEXT_FULL else s.summary
         if source.strip():
@@ -447,8 +466,9 @@ def context_report(
     tail_tok = 0
     if index > 0 and project.scenes[index - 1].text.strip() \
             and context_mode != CONTEXT_FULL:
-        tail_tok = min(PREV_TAIL_TOKENS,
-                       estimate_tokens(project.scenes[index - 1].text))
+        prev_tokens = estimate_tokens(project.scenes[index - 1].text)
+        tail_tok = (prev_tokens if context_mode == CONTEXT_PREV_FULL
+                    else min(PREV_TAIL_TOKENS, prev_tokens))
     lore_tok = estimate_tokens(match_lorebook(
         lorebook_entries, scene.outline_block(index + 1)))
     beat_tok = estimate_tokens(scene.outline_block(index + 1))
@@ -471,12 +491,14 @@ def context_report(
 
     prev_label = ("Full text of" if context_mode == CONTEXT_FULL
                   else "Summaries of")
+    tail_label = ("Previous scene IN FULL" if context_mode == CONTEXT_PREV_FULL
+                  else "End of previous scene")
     detail_lines = [
         f"What gets sent for scene {index + 1}:",
         f"    Storyboard: ≈{board_tok}",
         f"    Style guide: ≈{style_tok}",
         f"    {prev_label} {n_prev} earlier scene(s): ≈{prev_ctx_tok}",
-        f"    End of previous scene: ≈{tail_tok}",
+        f"    {tail_label}: ≈{tail_tok}",
         f"    Lorebook facts: ≈{lore_tok}",
         f"    This scene's outline: ≈{beat_tok}",
         f"    Prompt instructions: ≈{overhead}",
