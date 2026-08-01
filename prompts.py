@@ -100,6 +100,10 @@ _DEFAULT = {
             "- Output exactly {num_scenes} scenes, numbered SCENE 1 through SCENE {num_scenes}.\n"
             "- The scenes together must cover the whole plot, beginning to end.\n"
             "- Every scene must move the story forward; no filler scenes.\n"
+            "- Scenes must not overlap. Each one covers different events at a "
+            "later point in time than the one before it. Never split a single "
+            "conversation, meeting or event across two scenes, and never let a "
+            "scene revisit what an earlier scene already covered.\n"
             "- Output only the scene list, nothing else."
         ),
     },
@@ -136,7 +140,12 @@ _DEFAULT = {
             "with them — where they now are, what they are still feeling, "
             "thinking about or dealing with — before the events of this scene "
             "take over. Never start cold, as if the previous scene had not "
-            "happened.\n\n"
+            "happened.\n"
+            "The previous scene is shown to you only so this one can follow on "
+            "from it. It has already been written and the reader has already "
+            "read it: begin AFTER its final line and move the story forward. "
+            "Never retell, replay or re-quote its events, dialogue or ending, "
+            "and never rewrite it from another angle.\n\n"
             "Write the full prose of this scene now."
         ),
     },
@@ -347,6 +356,10 @@ _FAITHFUL = {
             "- The scenes together must cover the whole plot of the story "
             "board, beginning to end — every plot point placed in a scene.\n"
             "- Every scene must move the story forward; no filler scenes.\n"
+            "- Scenes must not overlap. Each one covers different events at a "
+            "later point in time than the one before it. Never split a single "
+            "conversation, meeting or event across two scenes, and never let a "
+            "scene revisit what an earlier scene already covered.\n"
             "- Vague beats like 'the detective investigates' are NOT acceptable "
             "— state what is investigated, what is found, and what it means.\n"
             "- Output only the scene list, nothing else."
