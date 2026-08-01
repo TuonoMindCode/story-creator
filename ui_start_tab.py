@@ -56,6 +56,7 @@ class BatchSpec:
     context_mode: str = "prev_full"
     language: str = "English"
     plan_in_language: bool = False
+    track_cast: bool = True
     cfg_board: SectionConfig = field(default_factory=SectionConfig)
     cfg_plan: SectionConfig = field(default_factory=SectionConfig)
     cfg_write: SectionConfig = field(default_factory=SectionConfig)
@@ -280,7 +281,19 @@ class StartTab(QWidget):
         for w in (self.ctx_summaries, self.ctx_prev_full, self.ctx_full):
             w.setToolTip(w.toolTip() + ctx_hint)
 
-        sg.addWidget(QLabel("Story language:"), 4, 0)
+        self.track_cast_check = QCheckBox(
+            "Track characters automatically (after each scene, note who "
+            "appeared so later scenes keep names, roles and genders straight)")
+        self.track_cast_check.setToolTip(
+            "Costs one small extra call per scene, made with the Summarizer "
+            "model. The story board's cast is always included; this adds "
+            "everyone the scenes introduce. Turn off for the fastest batches.")
+        self.track_cast_check.setChecked(bool(self.state.ui.get("track_cast", True)))
+        self.track_cast_check.toggled.connect(
+            lambda on: self.state.ui.__setitem__("track_cast", bool(on)))
+        sg.addWidget(self.track_cast_check, 4, 0, 1, 4)
+
+        sg.addWidget(QLabel("Story language:"), 5, 0)
         self.language_box = QComboBox()
         self.language_box.setEditable(True)
         self.language_box.addItems([
@@ -291,12 +304,12 @@ class StartTab(QWidget):
         self.language_box.setToolTip(
             "The Scene Writer (and scene summaries) write in this language. "
             "You can type any language.")
-        sg.addWidget(self.language_box, 4, 1)
+        sg.addWidget(self.language_box, 5, 1)
         self.plan_lang_check = QCheckBox(
             "Also write storyboard && outline in this language "
             "(English planning recommended — most models plan best in English)")
         self.plan_lang_check.setChecked(bool(self.state.ui.get("plan_in_language", False)))
-        sg.addWidget(self.plan_lang_check, 4, 2, 1, 2)
+        sg.addWidget(self.plan_lang_check, 5, 2, 1, 2)
         self.language_box.editTextChanged.connect(
             lambda t: self.state.ui.__setitem__("story_language", t.strip() or "English"))
         self.plan_lang_check.toggled.connect(
@@ -659,6 +672,7 @@ class StartTab(QWidget):
             context_mode=self.state.ui.get("context_mode", "prev_full"),
             language=self.state.ui.get("story_language", "English"),
             plan_in_language=bool(self.state.ui.get("plan_in_language", False)),
+            track_cast=bool(self.state.ui.get("track_cast", True)),
             cfg_board=self.state.runtime_cfg("storyboard"),
             cfg_plan=self.state.runtime_cfg("planner"),
             cfg_write=self.state.runtime_cfg("writer"),
@@ -851,6 +865,14 @@ class StartTab(QWidget):
                     if worker.cancel.is_set():
                         bridge.scene_done.emit(k)
                         break
+                    if (spec.track_cast and scene.text.strip()
+                            and not worker.cancel.is_set()):
+                        worker.progress.emit(
+                            f"{label} — noting characters in scene {k + 1}…")
+                        found = pipeline.generate_cast_update(
+                            cfg_summ, scene.text, story.cast,
+                            cancel=worker.cancel)
+                        pipeline.merge_cast(story, found)
                     if (spec.context_mode != "full" and k < len(story.scenes) - 1
                             and scene.text.strip()):
                         worker.progress.emit(f"{label} — summarizing scene {k + 1}…")

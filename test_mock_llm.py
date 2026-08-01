@@ -69,6 +69,10 @@ def pick_response(system: str, user: str) -> str:
         return "<think>secret reasoning plan</think>The real story begins here."
     if "story board" in blob or "storyboard" in blob and "scene" not in blob[:200]:
         pass
+    if "list every character in this scene" in blob:
+        return ("Inspector Hale: lead detective, male, retired opera singer.\n"
+                "Lady Blackwood: widow of the manor, female, hiding debts.\n"
+                "Beginning: this heading must be filtered out.")
     if "break the following story into" in blob:
         return MOCK_OUTLINE
     if "summarize the following scene" in blob:
@@ -333,6 +337,13 @@ def main():
     finally:
         pipeline.NOTIFY = None
     print("max-tokens cutoff detection OK")
+
+    # automatic character tracking: people are kept, headings are filtered
+    cast = pipeline.generate_cast_update(cfg, "scene prose here", {})
+    assert set(cast) == {"Inspector Hale", "Lady Blackwood"}, cast
+    assert "Beginning" not in cast, "a heading was recorded as a character"
+    assert "male" in cast["Inspector Hale"]
+    print("automatic character tracking OK")
 
     # ollama without a model must fail with a clear message, not a server 400
     import backends

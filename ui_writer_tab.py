@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+import applog
 import pipeline
 import project as prj
 
@@ -374,6 +375,7 @@ class WriterTab(QWidget):
         cfg_summ = self.state.runtime_cfg("summarizer").rolled()
         context_mode = self.state.ui.get("context_mode", "prev_full")
         language = self.state.ui.get("story_language", "English")
+        track_cast = bool(self.state.ui.get("track_cast", True))
         story.gen_info.setdefault("writer", {})
         story.gen_info["writer"] = {"backend": cfg_write.backend,
                                     "model": cfg_write.model,
@@ -428,6 +430,14 @@ class WriterTab(QWidget):
                 if worker.cancel.is_set():
                     bridge.scene_done.emit(index)
                     break
+                if track_cast and scene.text.strip() and not worker.cancel.is_set():
+                    worker.progress.emit(f"Noting characters in scene {index + 1}…")
+                    found = pipeline.generate_cast_update(
+                        cfg_summ, scene.text, story.cast, cancel=worker.cancel)
+                    added = pipeline.merge_cast(story, found)
+                    if added:
+                        applog.log("cast", f"scene {index + 1}: +{added} "
+                                   f"character(s) — now {len(story.cast)} tracked")
                 if context_mode != "full" and scene.text.strip():
                     worker.progress.emit(f"Summarizing scene {index + 1}…")
                     bridge.summary_started.emit(index)

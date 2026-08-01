@@ -372,12 +372,19 @@ def build_scene_prompts(
         prev_tail = ""
 
     lorebook = match_lorebook(lorebook_entries, scene.outline_block(scene_number), prev_tail)
-    if lorebook == "(none)":
-        # no lorebook yet — keep names/roles fixed with the storyboard's cast
-        cast = extract_characters(project.storyboard_text)
-        if cast:
-            lorebook = ("The cast (these names, roles and genders are fixed):\n"
-                        + "\n".join(f"- {n}: {d}" for n, d in cast))
+    # keep names/roles/genders fixed: the story board's cast plus everyone met
+    # in the scenes written so far (tracked automatically), then the lorebook
+    people: dict = {}
+    for name, desc in extract_characters(project.storyboard_text):
+        people[name] = desc
+    for name, desc in project.cast.items():
+        people.setdefault(name, desc)
+    if people:
+        cast_block = ("The cast so far (these names, roles and genders are "
+                      "fixed — never rename or re-invent them):\n"
+                      + "\n".join(f"- {n}: {d}" for n, d in people.items()))
+        lorebook = (cast_block if lorebook == "(none)"
+                    else cast_block + "\n\n" + lorebook)
     style_guide = extract_style_guide(project.storyboard_text) or "(follow the storyboard)"
 
     tpl = prompts.get_prompt(cfg.prompt_preset, "scene")
@@ -602,6 +609,77 @@ def generate_summary(
                    "Scene, or use a non-thinking Summarizer model.")
         return ("(automatic excerpt — the summarizer model produced no "
                 "summary) …" + tail_text(scene_text, 150))
+
+
+def generate_cast_update(
+    cfg: SectionConfig,
+    scene_text: str,
+    known: dict,
+    cancel: Optional[threading.Event] = None,
+) -> dict:
+    """Characters appearing in a finished scene, as {name: short description}.
+
+    Merged into the story's cast so later scenes keep names, roles and
+    genders straight. Returns only NEW or newly-detailed entries.
+    """
+    system = (
+        "You extract character records from a scene of a story. You list only "
+        "people who actually appear or are named, never places or companies, "
+        "and you never invent details that are not in the text."
+    )
+    known_note = ""
+    if known:
+        known_note = ("\n\nAlready recorded (list them again only if the scene "
+                      "adds something important): " + ", ".join(sorted(known)))
+    user = (
+        "List every character in this scene, one per line, in exactly this "
+        "format:\n"
+        "Name: role or relationship, gender, and any fact that must stay "
+        "consistent (max 20 words)\n\n"
+        "Use the name the story uses. Output only these lines, nothing else."
+        + known_note + "\n\nSCENE:\n" + scene_text.strip()
+    )
+    try:
+        text = _run_with_thinking_retry(cfg, "cast", system, user, cancel, None)
+    except backends.BackendError as e:
+        applog.log("cast", f"character tracking skipped: {e}")
+        return {}
+    found: dict = {}
+    for entry in parse_character_entries(text):
+        name = entry.name.strip()
+        if name and entry.content.strip() and _looks_like_person(name):
+            found[name] = entry.content.strip()
+    return found
+
+
+# section headings and narrative labels a model may emit as "Name:" lines
+_NOT_A_PERSON = {
+    "beginning", "middle", "end", "ending", "setting", "themes", "theme",
+    "title", "logline", "genre", "tone", "plot", "plot summary", "summary",
+    "note", "notes", "characters", "main characters", "location", "time",
+    "what happens", "purpose", "key details", "character focus", "scene",
+    "cast", "output", "example", "format", "none", "n/a",
+}
+
+
+def _looks_like_person(name: str) -> bool:
+    """Filter out headings and stray labels from extracted character lines."""
+    clean = name.strip().strip("*_#- ")
+    if not clean or len(clean) > 60 or clean.lower() in _NOT_A_PERSON:
+        return False
+    if len(clean.split()) > 5 or clean.endswith((".", "?", "!")):
+        return False
+    return clean[:1].isupper()
+
+
+def merge_cast(project: StoryProject, found: dict) -> int:
+    """Add newly seen characters to the story's cast; returns how many."""
+    added = 0
+    for name, desc in found.items():
+        if name not in project.cast:
+            project.cast[name] = desc
+            added += 1
+    return added
 
 
 def generate_character_cards(

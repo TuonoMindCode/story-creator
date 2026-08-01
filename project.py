@@ -256,6 +256,10 @@ class StoryProject:
     target_length: int = 900    # words per scene
     created: float = field(default_factory=time.time)
     gen_info: dict = field(default_factory=dict)  # params/models used per section
+    # characters met so far: name -> short description. Grows as scenes are
+    # written so later scenes keep names, roles and genders straight. Lives on
+    # the story, not the storyboard, so it never pollutes other stories.
+    cast: dict = field(default_factory=dict)
 
     @property
     def title(self) -> str:

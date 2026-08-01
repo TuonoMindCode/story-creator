@@ -326,6 +326,30 @@ Beginning: she is fired.
     print("cast extraction OK")
 
 
+def test_cast_tracking():
+    from backends import SectionConfig
+    story = StoryProject(
+        name="ct",
+        storyboard_text="# Title\nT\n\n# Main Characters\n**Clara Thorne** — secretary.\n",
+        scenes=[Scene(title="One", beat="b1", text="prose"),
+                Scene(title="Two", beat="b2")])
+    added = pipeline.merge_cast(story, {"Liam Reyes": "hiring manager at Zenith, male",
+                                        "Clara Thorne": "should not overwrite"})
+    assert added == 2 and story.cast["Liam Reyes"].startswith("hiring manager")
+    # tracked cast reaches the scene prompt alongside the storyboard cast
+    system, _ = pipeline.build_scene_prompts(SectionConfig(), story, 1, [])
+    assert "Liam Reyes" in system and "Clara Thorne" in system
+    assert "never rename or re-invent them" in system
+    # merging again adds nothing new
+    assert pipeline.merge_cast(story, {"Liam Reyes": "different text"}) == 0
+    # cast survives a save/load round trip
+    path = story.save()
+    reloaded = StoryProject.load(path)
+    assert reloaded.cast["Liam Reyes"].startswith("hiring manager")
+    path.unlink()
+    print("cast tracking OK")
+
+
 def test_outline_block():
     s = Scene(title="The Deficit Report", beat="She counts what is left.")
     block = s.outline_block(3)
@@ -479,6 +503,7 @@ if __name__ == "__main__":
     test_full_context_mode()
     test_language_option()
     test_cast_extraction()
+    test_cast_tracking()
     test_outline_block()
     test_strip_scene_artifacts()
     test_log_trim()
