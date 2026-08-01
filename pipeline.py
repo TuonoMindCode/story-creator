@@ -18,6 +18,7 @@ from project import (
     LorebookEntry,
     Scene,
     StoryProject,
+    extract_characters,
     extract_style_guide,
     remove_style_guide,
 )
@@ -371,6 +372,12 @@ def build_scene_prompts(
         prev_tail = ""
 
     lorebook = match_lorebook(lorebook_entries, scene.outline_block(scene_number), prev_tail)
+    if lorebook == "(none)":
+        # no lorebook yet — keep names/roles fixed with the storyboard's cast
+        cast = extract_characters(project.storyboard_text)
+        if cast:
+            lorebook = ("The cast (these names, roles and genders are fixed):\n"
+                        + "\n".join(f"- {n}: {d}" for n, d in cast))
     style_guide = extract_style_guide(project.storyboard_text) or "(follow the storyboard)"
 
     tpl = prompts.get_prompt(cfg.prompt_preset, "scene")

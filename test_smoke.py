@@ -297,6 +297,35 @@ def test_full_context_mode():
     print("full-context mode OK")
 
 
+def test_cast_extraction():
+    from project import extract_characters
+    board = """# Title
+The Unbreakable Schedule
+
+# Main Characters
+**Clara Vance** — Senior Administrative Secretary, mid-40s, precise.
+**Alistair Finch** — CEO of OmniCorp, cold and clipped.
+- **Brenda Hayes**: Recruiter, kinetic and impatient.
+
+# Plot Summary
+Beginning: she is fired.
+"""
+    cast = extract_characters(board)
+    names = [n for n, _ in cast]
+    assert names == ["Clara Vance", "Alistair Finch", "Brenda Hayes"], names
+    assert "Senior Administrative Secretary" in cast[0][1]
+    assert extract_characters("# Title\nNo cast here\n") == []
+
+    # the cast fills the lorebook slot when no lorebook entries exist
+    from backends import SectionConfig
+    story = StoryProject(name="c", storyboard_text=board,
+                         scenes=[Scene(title="One", beat="b")])
+    system, _ = pipeline.build_scene_prompts(SectionConfig(), story, 0, [])
+    assert "these names, roles and genders are fixed" in system
+    assert "Alistair Finch" in system
+    print("cast extraction OK")
+
+
 def test_outline_block():
     s = Scene(title="The Deficit Report", beat="She counts what is left.")
     block = s.outline_block(3)
@@ -449,6 +478,7 @@ if __name__ == "__main__":
     test_param_ranges()
     test_full_context_mode()
     test_language_option()
+    test_cast_extraction()
     test_outline_block()
     test_strip_scene_artifacts()
     test_log_trim()

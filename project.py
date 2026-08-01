@@ -141,6 +141,34 @@ def extract_style_guide(text: str) -> str:
     return m.group(1).strip() if m else ""
 
 
+_CHAR_LINE_RE = re.compile(
+    r"^\s*(?:[-*+]\s*)?\*{0,2}([A-Z][^\n*:—–-]{1,60}?)\*{0,2}\s*[—–:-]\s*(.+)$")
+
+
+def extract_characters(text: str) -> list[tuple[str, str]]:
+    """(name, description) pairs from the storyboard's Main Characters section.
+
+    Used to keep names/roles fixed while writing when no lorebook exists.
+    """
+    m = re.search(r"^#+\s*(?:Main\s+)?Characters\s*\n(.*?)(?=^#\s|\Z)", text,
+                  re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    if not m:
+        return []
+    out: list[tuple[str, str]] = []
+    for line in m.group(1).splitlines():
+        line = line.strip()
+        if not line or line.startswith("("):
+            continue
+        hit = _CHAR_LINE_RE.match(line)
+        if not hit:
+            continue
+        name = hit.group(1).strip().strip("*_ ")
+        desc = hit.group(2).strip()
+        if name and desc and len(name.split()) <= 5:
+            out.append((name, desc))
+    return out
+
+
 def remove_style_guide(text: str) -> str:
     """Storyboard text without its Narrative Style Guide section (which the
     scene prompt already carries separately in {style_guide})."""
