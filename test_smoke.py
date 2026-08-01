@@ -376,6 +376,25 @@ def test_outline_block():
     print("outline block formatting OK")
 
 
+def test_repeated_opening_detection():
+    f = pipeline.find_repeated_opening
+    prev = ("She walked to the window and watched the rain. "
+            "I am fully willing to accept the premise that Campaign Gamma "
+            "requires my dedicated focus Tuesday evening.")
+    # the new scene opens by re-quoting the previous scene's closing line
+    repeated = ("I am fully willing to accept the premise that Campaign Gamma "
+                "requires my dedicated focus Tuesday evening, she repeated.")
+    hit = f(repeated, prev)
+    assert "Campaign Gamma" in hit and len(hit) >= 60, hit
+    # a genuine continuation that only refers back is not flagged
+    fresh = ("The morning after the interview, she took the long way to the "
+             "station and thought about what she had conceded.")
+    assert f(fresh, prev) == ""
+    # short coincidental overlaps are ignored
+    assert f("She walked to the door.", prev) == ""
+    print("repeated-opening detection OK")
+
+
 def test_strip_scene_artifacts():
     f = pipeline.strip_scene_artifacts
     assert f("# Scene 4\n\nThe rain fell.", "The Interview") == "The rain fell."
@@ -538,6 +557,7 @@ if __name__ == "__main__":
     test_cast_extraction()
     test_cast_tracking()
     test_outline_block()
+    test_repeated_opening_detection()
     test_strip_scene_artifacts()
     test_log_trim()
     test_infinite_spin()

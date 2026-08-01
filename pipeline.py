@@ -562,6 +562,30 @@ def strip_scene_artifacts(text: str, title: str = "") -> str:
     return out.strip()
 
 
+def find_repeated_opening(new_text: str, prev_text: str,
+                          min_len: int = 60) -> str:
+    """Longest chunk the new scene's opening copies from the previous scene.
+
+    Catches the writer restarting the previous scene instead of moving on.
+    Returns "" when nothing substantial is repeated.
+    """
+    opening = " ".join(new_text[:900].split())
+    previous = " ".join(prev_text[-4000:].split())
+    if len(opening) < min_len or len(previous) < min_len:
+        return ""
+    best = ""
+    for start in range(0, len(opening) - min_len + 1):
+        chunk = opening[start:start + min_len]
+        if chunk not in previous:
+            continue
+        end = start + min_len
+        while end < len(opening) and opening[start:end + 1] in previous:
+            end += 1
+        if end - start > len(best):
+            best = opening[start:end]
+    return best
+
+
 def generate_scene(
     cfg: SectionConfig,
     project: StoryProject,
@@ -583,7 +607,21 @@ def generate_scene(
         )
     text = _run_with_thinking_retry(cfg, "scene", system, user,
                                     cancel, on_chunk).strip()
-    return strip_scene_artifacts(text, project.scenes[index].title)
+    text = strip_scene_artifacts(text, project.scenes[index].title)
+
+    # the writer sometimes restarts the previous scene instead of continuing
+    if index > 0 and text:
+        prev = project.scenes[index - 1].text
+        repeat = find_repeated_opening(text, prev) if prev.strip() else ""
+        if repeat:
+            msg = (f"⚠ Scene {index + 1} opens by repeating {len(repeat)} "
+                   f"characters of scene {index}: “{repeat[:70]}…” — "
+                   "regenerate it, or use a context mode that sends less of "
+                   "the previous scene.")
+            applog.log("scene", msg)
+            if NOTIFY is not None:
+                NOTIFY(msg)
+    return text
 
 
 def generate_summary(
