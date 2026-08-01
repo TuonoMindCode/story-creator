@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSplitter,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -76,6 +77,8 @@ class LorebookTab(QWidget):
         ll.addLayout(cast_row)
         splitter.addWidget(left)
 
+        # right side switches between the lorebook form and the cast details
+        self.right_stack = QStackedWidget()
         right = QWidget()
         form = QFormLayout(right)
         self.name_edit = QLineEdit()
@@ -94,7 +97,34 @@ class LorebookTab(QWidget):
         )
         info.setWordWrap(True)
         form.addRow(info)
-        splitter.addWidget(right)
+        self.right_stack.addWidget(right)          # page 0: lorebook entry
+
+        cast_page = QWidget()
+        cf = QFormLayout(cast_page)
+        self.cast_name_label = QLabel("")
+        self.cast_name_label.setStyleSheet("font-weight: bold;")
+        self.cast_first_label = QLabel("")
+        self.cast_scenes_label = QLabel("")
+        self.cast_scenes_label.setWordWrap(True)
+        self.cast_desc_edit = QPlainTextEdit()
+        self.cast_desc_edit.setPlaceholderText(
+            "What the scenes are told about this character…")
+        self.cast_desc_edit.textChanged.connect(self._cast_desc_edited)
+        cf.addRow("Character", self.cast_name_label)
+        cf.addRow("First appears", self.cast_first_label)
+        cf.addRow("Appears in", self.cast_scenes_label)
+        cf.addRow("Facts", self.cast_desc_edit)
+        cast_info = QLabel(
+            "Noted automatically after each scene and sent to every later "
+            "scene so names, roles and genders stay fixed. Edits here are "
+            "saved with the story; Copy to Lorebook makes it permanent for "
+            "every story from this storyboard."
+        )
+        cast_info.setWordWrap(True)
+        cf.addRow(cast_info)
+        self.right_stack.addWidget(cast_page)      # page 1: tracked character
+
+        splitter.addWidget(self.right_stack)
         splitter.setSizes([300, 860])
 
         self.name_edit.textChanged.connect(self._field_changed)
@@ -124,17 +154,26 @@ class LorebookTab(QWidget):
     def refresh_cast(self):
         story = self.state.project
         cast = story.cast if story else {}
+        current = self._cast_name()
         self.cast_list.blockSignals(True)
         self.cast_list.clear()
-        for person, desc in cast.items():
-            self.cast_list.addItem(f"{person} — {desc}")
+        for person in cast:
+            first = story.cast_first_scene(person)
+            label = f"{person}   (scene {first})" if first else person
+            self.cast_list.addItem(label)
         self.cast_list.blockSignals(False)
         has = bool(cast)
         self.btn_cast_keep.setEnabled(has)
         self.btn_cast_del.setEnabled(has)
-        if not has and story is not None:
+        if not has:
             self.cast_list.addItem(
                 "(nothing tracked yet — filled in as scenes are written)")
+            if self.right_stack.currentIndex() == 1:
+                self.right_stack.setCurrentIndex(0)
+            return
+        if current in cast:  # keep the selection across refreshes
+            self.cast_list.setCurrentRow(list(cast).index(current))
+            self._show_cast_details(current)
 
     def _cast_name(self) -> str:
         story = self.state.project
@@ -142,8 +181,46 @@ class LorebookTab(QWidget):
         names = list(story.cast) if story else []
         return names[row] if 0 <= row < len(names) else ""
 
-    def _cast_selected(self, _row: int):
-        pass  # selection alone changes nothing; the buttons act on it
+    def _cast_selected(self, row: int):
+        story = self.state.project
+        if self._loading or story is None:
+            return
+        names = list(story.cast)
+        if not (0 <= row < len(names)):
+            return
+        self.list.blockSignals(True)      # the two lists are alternatives
+        self.list.setCurrentRow(-1)
+        self.list.blockSignals(False)
+        self._show_cast_details(names[row])
+
+    def _show_cast_details(self, person: str):
+        story = self.state.project
+        if story is None or person not in story.cast:
+            return
+        scenes = story.cast_scenes(person)
+        first = story.cast_first_scene(person)
+        self._loading = True
+        self.cast_name_label.setText(person)
+        self.cast_first_label.setText(
+            f"Scene {first}" if first else "(scene not recorded)")
+        self.cast_scenes_label.setText(
+            ", ".join(f"scene {s}" for s in scenes) if scenes else "—")
+        self.cast_desc_edit.setPlainText(story.cast_desc(person))
+        self._loading = False
+        self.right_stack.setCurrentIndex(1)
+
+    def _cast_desc_edited(self):
+        story = self.state.project
+        person = self._cast_name()
+        if self._loading or story is None or not person:
+            return
+        rec = story.cast.get(person)
+        if isinstance(rec, dict):
+            rec["desc"] = self.cast_desc_edit.toPlainText().strip()
+        else:
+            story.cast[person] = {"desc": self.cast_desc_edit.toPlainText().strip(),
+                                  "scenes": []}
+        self.state.autosave_project()
 
     def _promote_cast_entry(self):
         story = self.state.project
@@ -158,7 +235,7 @@ class LorebookTab(QWidget):
             self.main.statusBar().showMessage(f"'{person}' is already in the lorebook.")
             return
         self.entries.append(LorebookEntry(
-            name=person, keywords=[person], content=story.cast[person],
+            name=person, keywords=[person], content=story.cast_desc(person),
             always_include=True))
         self._save()
         self._reload_list()
@@ -203,6 +280,10 @@ class LorebookTab(QWidget):
     def _selected(self, row: int):
         if self._loading or not (0 <= row < len(self.entries)):
             return
+        self.cast_list.blockSignals(True)   # the two lists are alternatives
+        self.cast_list.setCurrentRow(-1)
+        self.cast_list.blockSignals(False)
+        self.right_stack.setCurrentIndex(0)
         e = self.entries[row]
         self._loading = True
         self.name_edit.setText(e.name)

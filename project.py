@@ -256,10 +256,43 @@ class StoryProject:
     target_length: int = 900    # words per scene
     created: float = field(default_factory=time.time)
     gen_info: dict = field(default_factory=dict)  # params/models used per section
-    # characters met so far: name -> short description. Grows as scenes are
-    # written so later scenes keep names, roles and genders straight. Lives on
-    # the story, not the storyboard, so it never pollutes other stories.
+    # characters met so far: name -> {"desc": str, "scenes": [1, 3, …]}.
+    # Grows as scenes are written so later scenes keep names, roles and genders
+    # straight. Lives on the story, not the storyboard, so it never pollutes
+    # other stories.
     cast: dict = field(default_factory=dict)
+
+    # -- tracked cast helpers ------------------------------------------------
+
+    @staticmethod
+    def _cast_record(value) -> dict:
+        """Accept both the current dict form and the earlier plain string."""
+        if isinstance(value, dict):
+            return {"desc": str(value.get("desc", "")),
+                    "scenes": [int(s) for s in value.get("scenes", [])]}
+        return {"desc": str(value), "scenes": []}
+
+    def cast_desc(self, name: str) -> str:
+        return self._cast_record(self.cast.get(name, "")).get("desc", "")
+
+    def cast_scenes(self, name: str) -> list[int]:
+        return self._cast_record(self.cast.get(name, "")).get("scenes", [])
+
+    def cast_first_scene(self, name: str) -> int | None:
+        scenes = self.cast_scenes(name)
+        return min(scenes) if scenes else None
+
+    def note_cast(self, name: str, desc: str, scene_number: int | None = None) -> bool:
+        """Record a character (and the scene they appear in). True if new."""
+        is_new = name not in self.cast
+        rec = self._cast_record(self.cast.get(name, {"desc": desc, "scenes": []}))
+        if is_new or not rec["desc"]:
+            rec["desc"] = desc
+        if scene_number and scene_number not in rec["scenes"]:
+            rec["scenes"].append(scene_number)
+            rec["scenes"].sort()
+        self.cast[name] = rec
+        return is_new
 
     @property
     def title(self) -> str:

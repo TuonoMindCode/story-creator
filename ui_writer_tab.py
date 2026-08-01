@@ -434,7 +434,7 @@ class WriterTab(QWidget):
                     worker.progress.emit(f"Noting characters in scene {index + 1}…")
                     found = pipeline.generate_cast_update(
                         cfg_summ, scene.text, story.cast, cancel=worker.cancel)
-                    added = pipeline.merge_cast(story, found)
+                    added = pipeline.merge_cast(story, found, index + 1)
                     if added:
                         applog.log("cast", f"scene {index + 1}: +{added} "
                                    f"character(s) — now {len(story.cast)} tracked")

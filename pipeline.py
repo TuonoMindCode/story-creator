@@ -377,12 +377,17 @@ def build_scene_prompts(
     people: dict = {}
     for name, desc in extract_characters(project.storyboard_text):
         people[name] = desc
-    for name, desc in project.cast.items():
-        people.setdefault(name, desc)
+    for name in project.cast:
+        people.setdefault(name, project.cast_desc(name))
     if people:
+        lines = []
+        for n, d in people.items():
+            first = project.cast_first_scene(n)
+            seen = f" [since scene {first}]" if first else ""
+            lines.append(f"- {n}{seen}: {d}")
         cast_block = ("The cast so far (these names, roles and genders are "
                       "fixed — never rename or re-invent them):\n"
-                      + "\n".join(f"- {n}: {d}" for n, d in people.items()))
+                      + "\n".join(lines))
         lorebook = (cast_block if lorebook == "(none)"
                     else cast_block + "\n\n" + lorebook)
     style_guide = extract_style_guide(project.storyboard_text) or "(follow the storyboard)"
@@ -672,12 +677,12 @@ def _looks_like_person(name: str) -> bool:
     return clean[:1].isupper()
 
 
-def merge_cast(project: StoryProject, found: dict) -> int:
-    """Add newly seen characters to the story's cast; returns how many."""
+def merge_cast(project: StoryProject, found: dict,
+               scene_number: Optional[int] = None) -> int:
+    """Record characters seen in a scene; returns how many are new."""
     added = 0
     for name, desc in found.items():
-        if name not in project.cast:
-            project.cast[name] = desc
+        if project.note_cast(name, desc, scene_number):
             added += 1
     return added
 

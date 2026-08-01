@@ -334,19 +334,30 @@ def test_cast_tracking():
         scenes=[Scene(title="One", beat="b1", text="prose"),
                 Scene(title="Two", beat="b2")])
     added = pipeline.merge_cast(story, {"Liam Reyes": "hiring manager at Zenith, male",
-                                        "Clara Thorne": "should not overwrite"})
-    assert added == 2 and story.cast["Liam Reyes"].startswith("hiring manager")
-    # tracked cast reaches the scene prompt alongside the storyboard cast
+                                        "Clara Thorne": "should not overwrite"},
+                                scene_number=1)
+    assert added == 2 and story.cast_desc("Liam Reyes").startswith("hiring manager")
+    assert story.cast_first_scene("Liam Reyes") == 1
+    # seen again in a later scene: not new, but the appearance is recorded
+    assert pipeline.merge_cast(story, {"Liam Reyes": "different text"}, 2) == 0
+    assert story.cast_scenes("Liam Reyes") == [1, 2]
+    assert story.cast_first_scene("Liam Reyes") == 1, "first scene must not move"
+    # tracked cast reaches the scene prompt with its first-appearance note
     system, _ = pipeline.build_scene_prompts(SectionConfig(), story, 1, [])
     assert "Liam Reyes" in system and "Clara Thorne" in system
+    assert "since scene 1" in system
     assert "never rename or re-invent them" in system
-    # merging again adds nothing new
-    assert pipeline.merge_cast(story, {"Liam Reyes": "different text"}) == 0
     # cast survives a save/load round trip
     path = story.save()
     reloaded = StoryProject.load(path)
-    assert reloaded.cast["Liam Reyes"].startswith("hiring manager")
+    assert reloaded.cast_desc("Liam Reyes").startswith("hiring manager")
+    assert reloaded.cast_scenes("Liam Reyes") == [1, 2]
     path.unlink()
+    # stories saved before scene tracking (plain strings) still load
+    legacy = StoryProject(name="legacy")
+    legacy.cast = {"Old Name": "a plain string description"}
+    assert legacy.cast_desc("Old Name") == "a plain string description"
+    assert legacy.cast_first_scene("Old Name") is None
     print("cast tracking OK")
 
 
@@ -472,15 +483,22 @@ def test_ui_builds():
     # the lorebook tab shows the story's automatically tracked cast
     story_lb = StoryProject(name="lb-test", storyboard_text="# Title\nT\n",
                             scenes=[Scene(title="One", beat="b")])
-    story_lb.cast["Liam Reyes"] = "hiring manager, male"
+    story_lb.note_cast("Liam Reyes", "hiring manager, male", 3)
     win.state.project = story_lb
     win.state.selected_storyboard = ""
-    win.tab_lorebook.refresh_cast()
-    assert win.tab_lorebook.cast_list.count() == 1
-    assert "Liam Reyes" in win.tab_lorebook.cast_list.item(0).text()
+    lb = win.tab_lorebook
+    lb.refresh_cast()
+    assert lb.cast_list.count() == 1
+    # the list shows the name (with its first scene), details go on the right
+    assert lb.cast_list.item(0).text() == "Liam Reyes   (scene 3)"
+    lb.cast_list.setCurrentRow(0)
+    lb._cast_selected(0)
+    assert lb.right_stack.currentIndex() == 1, "cast page should be shown"
+    assert lb.cast_name_label.text() == "Liam Reyes"
+    assert lb.cast_first_label.text() == "Scene 3"
+    assert "hiring manager" in lb.cast_desc_edit.toPlainText()
     # forgetting a wrongly detected character removes it
-    win.tab_lorebook.cast_list.setCurrentRow(0)
-    win.tab_lorebook._forget_cast_entry()
+    lb._forget_cast_entry()
     assert story_lb.cast == {}
     win.state.project = None
 
