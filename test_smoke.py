@@ -353,6 +353,22 @@ def test_cast_tracking():
     assert reloaded.cast_desc("Liam Reyes").startswith("hiring manager")
     assert reloaded.cast_scenes("Liam Reyes") == [1, 2]
     path.unlink()
+    # an identity reveal must not create a second cast member
+    reveal = StoryProject(name="reveal")
+    reveal.note_cast("Svetlana", "victim, female", 1)
+    assert reveal.note_cast("Svetlana Doe", "victim identified", 3) is False
+    assert list(reveal.cast) == ["Svetlana Doe"], reveal.cast
+    assert reveal.cast_scenes("Svetlana Doe") == [1, 3]
+    assert reveal.cast_first_scene("Svetlana Doe") == 1
+    # titles do not fork a character either
+    reveal.note_cast("Dr. Moreau", "dental forensics, male", 3)
+    assert reveal.note_cast("Moreau", "same man", 4) is False
+    assert reveal.cast_scenes("Dr. Moreau") == [3, 4]
+    # genuinely different people stay separate, even sharing a surname
+    reveal.note_cast("Sofia Rostova", "sous chef, female", 4)
+    assert reveal.note_cast("Elina Rostova", "her sister, female", 5) is True
+    assert "Sofia Rostova" in reveal.cast and "Elina Rostova" in reveal.cast
+
     # stories saved before scene tracking (plain strings) still load
     legacy = StoryProject(name="legacy")
     legacy.cast = {"Old Name": "a plain string description"}

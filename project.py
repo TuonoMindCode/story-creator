@@ -282,16 +282,48 @@ class StoryProject:
         scenes = self.cast_scenes(name)
         return min(scenes) if scenes else None
 
+    _NAME_TITLES = {"dr", "dr.", "doctor", "professor", "prof", "prof.", "mr",
+                    "mr.", "mrs", "mrs.", "ms", "ms.", "miss", "detective",
+                    "officer", "captain", "lieutenant", "sergeant"}
+
+    @classmethod
+    def _name_words(cls, name: str) -> set:
+        words = {w.strip(".,'\"").lower() for w in name.split()}
+        return {w for w in words if w and w not in cls._NAME_TITLES}
+
+    def _same_person(self, name: str) -> str:
+        """An already-tracked name that refers to the same person.
+
+        A story that reveals an identity calls one woman 'Svetlana' and then
+        'Svetlana Doe'; without this they become two cast members and both get
+        sent to later scenes.
+        """
+        words = self._name_words(name)
+        if not words:
+            return ""
+        for existing in self.cast:
+            other = self._name_words(existing)
+            if other and (words <= other or other <= words):
+                return existing
+        return ""
+
     def note_cast(self, name: str, desc: str, scene_number: int | None = None) -> bool:
         """Record a character (and the scene they appear in). True if new."""
-        is_new = name not in self.cast
-        rec = self._cast_record(self.cast.get(name, {"desc": desc, "scenes": []}))
+        existing = name if name in self.cast else self._same_person(name)
+        is_new = not existing
+        rec = self._cast_record(self.cast.get(existing, {"desc": desc, "scenes": []}))
         if is_new or not rec["desc"]:
             rec["desc"] = desc
         if scene_number and scene_number not in rec["scenes"]:
             rec["scenes"].append(scene_number)
             rec["scenes"].sort()
-        self.cast[name] = rec
+        # keep the fuller name as the canonical one ("Svetlana" -> "Svetlana Doe")
+        canonical = name
+        if existing:
+            canonical = max((existing, name), key=lambda n: len(self._name_words(n)))
+            if canonical != existing:
+                self.cast.pop(existing, None)
+        self.cast[canonical] = rec
         return is_new
 
     @property
