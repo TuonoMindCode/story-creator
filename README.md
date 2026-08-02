@@ -9,7 +9,7 @@ fix is to use a none thinking model for the summerizer.
 
 The rest of the readme is created by Claude. 
 
-![Story Start tab](story-start02.PNG)
+![Story Start tab](story-start03.PNG)
 
 Cross-platform (Windows/Linux/Mac) PySide6 desktop app that writes long,
 multi-scene stories with **local LLMs**. Because local models typically produce
