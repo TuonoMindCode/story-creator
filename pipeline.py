@@ -20,6 +20,7 @@ from project import (
     StoryProject,
     extract_characters,
     extract_style_guide,
+    filter_reveals,
     remove_style_guide,
 )
 
@@ -395,9 +396,12 @@ def build_scene_prompts(
     tpl = prompts.get_prompt(cfg.prompt_preset, "scene")
     # avoid sending the style guide twice: if the template has a separate
     # {style_guide} slot, strip that section out of the storyboard text
-    board_text = project.storyboard_text.strip()
+    # withhold anything the plan marks as revealed in a later scene, so the
+    # writer cannot spoil an identity or a culprit before the reader learns it
+    visible_board = filter_reveals(project.storyboard_text, scene_number)
+    board_text = visible_board.strip()
     if "{style_guide}" in (tpl["system"] + tpl["user"]) and style_guide != "(follow the storyboard)":
-        stripped = remove_style_guide(project.storyboard_text)
+        stripped = remove_style_guide(visible_board)
         if stripped:
             board_text = stripped
     if context_mode == CONTEXT_FULL and index > 0:

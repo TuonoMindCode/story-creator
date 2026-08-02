@@ -392,6 +392,35 @@ def test_outline_block():
     print("outline block formatting OK")
 
 
+def test_reveal_gating():
+    from project import filter_reveals
+    board = (
+        "# Title\nThe Echo\n\n"
+        "# Main Characters\n**Jane Doe** — the victim, unidentified.\n\n"
+        "# Reveals\n"
+        "Scene 3: the laundry tag gives the name Elara\n"
+        "Scene 5: her full name is Elara Petrova\n"
+        "Scene 6: the killer is her apprentice\n\n"
+        "# Themes\nIdentity.\n")
+    early = filter_reveals(board, 2)
+    assert "Elara" not in early, early
+    assert "3 later reveal(s) withheld" in early
+    assert "# Themes" in early and "Jane Doe" in early, "rest of the board kept"
+
+    mid = filter_reveals(board, 3)
+    assert "the laundry tag gives the name Elara" in mid
+    assert "Elara Petrova" not in mid
+    assert "2 later reveal(s) withheld" in mid
+
+    late = filter_reveals(board, 6)
+    assert "the killer is her apprentice" in late
+    assert "withheld" not in late
+    # a board with no Reveals section is untouched
+    plain = "# Title\nX\n\n# Themes\nY\n"
+    assert filter_reveals(plain, 1) == plain
+    print("reveal gating OK")
+
+
 def test_scene_reference_detection():
     f = pipeline.find_scene_reference
     # the plan leaking into the prose
@@ -599,6 +628,7 @@ if __name__ == "__main__":
     test_cast_extraction()
     test_cast_tracking()
     test_outline_block()
+    test_reveal_gating()
     test_scene_reference_detection()
     test_placeholder_stub_detection()
     test_repeated_opening_detection()

@@ -169,6 +169,40 @@ def extract_characters(text: str) -> list[tuple[str, str]]:
     return out
 
 
+_REVEALS_RE = re.compile(r"^#+\s*Reveals\s*\n(.*?)(?=^#\s|\Z)",
+                         re.MULTILINE | re.DOTALL | re.IGNORECASE)
+_REVEAL_LINE_RE = re.compile(r"^\s*[-*]?\s*scenes?\s*(\d+)\s*[:.\-–]\s*(.+)$",
+                             re.IGNORECASE)
+
+
+def filter_reveals(text: str, scene_number: int) -> str:
+    """Storyboard text with later reveals removed.
+
+    A mystery's plan has to contain the answer, but the scene writer must not
+    see it before the reader does. Lines in a '# Reveals' section that are
+    marked for a later scene are dropped when writing an earlier one.
+    """
+    match = _REVEALS_RE.search(text)
+    if not match:
+        return text
+    kept, hidden = [], 0
+    for line in match.group(1).splitlines():
+        if not line.strip():
+            continue
+        hit = _REVEAL_LINE_RE.match(line)
+        if hit and int(hit.group(1)) > scene_number:
+            hidden += 1
+            continue
+        kept.append(line.rstrip())
+    body = "\n".join(kept)
+    if hidden:
+        body += (f"\n({hidden} later reveal(s) withheld — the reader does not "
+                 "know them yet, so this scene must not state or hint at them.)")
+    section = match.group(0)
+    header = section[:section.index("\n") + 1]
+    return text[:match.start()] + header + body + "\n\n" + text[match.end():]
+
+
 def remove_style_guide(text: str) -> str:
     """Storyboard text without its Narrative Style Guide section (which the
     scene prompt already carries separately in {style_guide})."""
