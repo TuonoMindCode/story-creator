@@ -179,7 +179,11 @@ _DEFAULT = {
             "still feeling or dealing with) — then move into this scene's own "
             "events and stay there. Begin AFTER the previous scene's final "
             "line: never retell, replay or re-quote its events or dialogue, "
-            "and never rewrite it from another angle.\n\n"
+            "and never rewrite it from another angle. Do not open by finishing "
+            "the physical action the previous scene ended on (rising from the "
+            "chair they sat down in, reopening the laptop they closed); open "
+            "at this scene's own moment, and do not start it with the same "
+            "subject and verb the previous scene started with.\n\n"
             "Write the full prose of scene {scene_number} now, delivering the "
             "events described above."
         ),

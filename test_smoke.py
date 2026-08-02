@@ -549,6 +549,89 @@ def test_repeated_opening_detection():
     print("repeated-opening detection OK")
 
 
+def test_author_aside_detection():
+    f = pipeline.find_author_aside
+    hit = f("The hiring manager, David Hayes (no relation to Clara's husband), "
+            "waits across the table.")
+    assert "no relation" in hit, hit
+    assert f("She read the note (twice) before answering.") == ""
+    assert f("He paused (a habit she had never liked) and looked up.") == ""
+    print("author-aside detection OK")
+
+
+def test_renamed_entity_detection():
+    f = pipeline.find_renamed_entity
+    established = ("Clara spent fifteen years at Sterling & Finch. "
+                   "The Sterling & Finch offices were on the tenth floor. "
+                   "Marcus Thorne ran Sterling & Finch like a museum.")
+    drift = "Since Stellar & Finch historically siloed finance, she proposed."
+    hit = f(drift, established)
+    assert "Stellar & Finch" in hit and "Sterling & Finch" in hit, hit
+    # a genuinely new company is not a misspelling of the old one
+    assert f("She interviewed at Apex Solutions.", established) == ""
+    # the established name itself is fine
+    assert f("She returned to Sterling & Finch.", established) == ""
+    # a name used only once is not established enough to compare against
+    assert f("Stellar & Finch called back.",
+             "Clara left Sterling & Finch.") == ""
+    print("renamed-entity detection OK")
+
+
+def test_formulaic_opening_detection():
+    f = pipeline.find_formulaic_opening
+    prev = "Clara rises from the imposing chair at Apex Solutions, exhausted."
+    same = "Clara rises slowly from the vinyl stool at The Daily Grind."
+    assert f(same, prev) == "clara rises", f(same, prev)
+    fresh = "The low hum of the refrigerator fills the kitchen."
+    assert f(fresh, prev) == ""
+    # a shared opening article alone is not a pattern
+    assert f("The rain fell.", "The morning came slowly.") == ""
+    print("formulaic-opening detection OK")
+
+
+def test_scene_issue_collection():
+    from project import StoryProject, Scene
+    story = StoryProject(name="issues", storyboard_text="")
+    story.scenes = [Scene(title="One", text="She waited by the door."),
+                    Scene(title="Two")]
+    issues = pipeline.check_scene(story, 1, "As established in Scene 1, [insert name] arrived.")
+    assert len(issues) == 2, issues
+    assert any("Scene 1" in i for i in issues), issues
+    assert any("placeholder" in i for i in issues), issues
+    assert all(i.startswith("⚠ Scene 2") for i in issues), issues
+    assert pipeline.check_scene(story, 1, "She opened the door and left.") == []
+    print("scene issue collection OK")
+
+
+def test_upcoming_cast_withheld():
+    from backends import SectionConfig
+    from project import StoryProject, Scene
+    cfg = SectionConfig()
+    cfg.context_length = 8192
+    story = StoryProject(name="upcoming")
+    story.storyboard_text = (
+        "# Main Characters\n"
+        "- Clara Vance: the secretary\n"
+        "- Brenda Holloway: the hiring manager at Apex\n"
+    )
+    story.scenes = [
+        Scene(title="Termination", beat="Clara clears her desk alone."),
+        Scene(title="Interview", beat="Brenda Holloway interviews Clara."),
+    ]
+    system, user = pipeline.build_scene_prompts(cfg, story, 0, [])
+    both = system + user
+    assert "Clara Vance" in both
+    # she belongs to scene 2 — scene 1 may not put her in the office
+    assert "Not in the story yet" in both, both
+    assert "Brenda Holloway (scene 2)" in both, both
+    assert "the hiring manager at Apex" not in both, both
+    # by her own scene she is fully described
+    system2, user2 = pipeline.build_scene_prompts(cfg, story, 1, [])
+    assert "the hiring manager at Apex" in system2 + user2
+    assert "Not in the story yet" not in system2 + user2
+    print("upcoming-cast withholding OK")
+
+
 def test_strip_scene_artifacts():
     f = pipeline.strip_scene_artifacts
     assert f("# Scene 4\n\nThe rain fell.", "The Interview") == "The rain fell."
@@ -675,6 +758,28 @@ def test_ui_builds():
     assert story_lb.cast == {}
     win.state.project = None
 
+    # continuity warnings found while writing stay visible on the scene
+    story_iss = StoryProject(name="iss-test", storyboard_text="# Title\nT\n")
+    story_iss.scenes = [
+        Scene(title="One", text="She waited.", status=prj_mod.SCENE_WRITTEN),
+        Scene(title="Two", text="As shown in Scene 1, she left.",
+              status=prj_mod.SCENE_WRITTEN,
+              issues=["⚠ Scene 2 refers to the story's own plan"]),
+    ]
+    win.state.project = story_iss
+    wt = win.tab_writer
+    wt.refresh()
+    assert "⚠" not in wt.list.item(0).text(), wt.list.item(0).text()
+    assert wt.list.item(1).text().endswith("⚠"), wt.list.item(1).text()
+    wt.list.setCurrentRow(1)
+    wt._selected(1)
+    assert not wt.issues_label.isHidden()
+    assert "own plan" in wt.issues_label.text()
+    wt.list.setCurrentRow(0)
+    wt._selected(0)
+    assert wt.issues_label.isHidden(), "a clean scene must show no warning"
+    win.state.project = None
+
     # quick setup applies a preset combination to all four sections
     win.state.sections["planner"].params.max_tokens = 1536
     win.tab_prompts._quick_setup_clicked(1)  # "Detailed & faithful"
@@ -718,6 +823,11 @@ if __name__ == "__main__":
     test_placeholder_stub_detection()
     test_role_label_and_honorific_detection()
     test_repeated_opening_detection()
+    test_author_aside_detection()
+    test_renamed_entity_detection()
+    test_formulaic_opening_detection()
+    test_scene_issue_collection()
+    test_upcoming_cast_withheld()
     test_strip_scene_artifacts()
     test_log_trim()
     test_infinite_spin()

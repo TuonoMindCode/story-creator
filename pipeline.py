@@ -23,6 +23,7 @@ from project import (
     extract_style_guide,
     find_confusable_names,
     filter_reveals,
+    remove_character_lines,
     remove_style_guide,
 )
 
@@ -390,17 +391,36 @@ def build_scene_prompts(
         people[name] = desc
     for name in project.cast:
         people.setdefault(name, project.cast_desc(name))
-    if people:
-        lines = []
-        for n, d in people.items():
-            first = project.cast_first_scene(n)
-            seen = f" [since scene {first}]" if first else ""
-            pron = project.cast_pronouns(n)
-            who = f"{n} ({pron})" if pron else n
-            lines.append(f"- {who}{seen}: {d}")
-        cast_block = ("The cast so far (these names, roles and genders are "
+    lines, upcoming, not_yet = [], [], []
+    for n, d in people.items():
+        first = project.cast_first_scene(n)
+        if first is None:
+            # never written yet: the plan decides whether they are due
+            due = project.outline_first_scene(n)
+            if due is not None and due > scene_number:
+                upcoming.append(f"{n} (scene {due})")
+                not_yet.append(n)
+                continue
+        seen = f" [since scene {first}]" if first else ""
+        pron = project.cast_pronouns(n)
+        who = f"{n} ({pron})" if pron else n
+        lines.append(f"- {who}{seen}: {d}")
+    blocks = []
+    if lines:
+        blocks.append("The cast so far (these names, roles and genders are "
                       "fixed — never rename or re-invent them):\n"
                       + "\n".join(lines))
+    if upcoming:
+        blocks.append("Not in the story yet — do not name, quote or place "
+                      "them anywhere before the scene shown:\n"
+                      + "\n".join(f"- {u}" for u in upcoming))
+    if people:
+        blocks.append("Every name above is taken. If this scene needs someone "
+                      "new, give them a first name and a surname that no one "
+                      "else already has and that cannot be misread as one of "
+                      "these names.")
+    if blocks:
+        cast_block = "\n\n".join(blocks)
         lorebook = (cast_block if lorebook == "(none)"
                     else cast_block + "\n\n" + lorebook)
     style_guide = extract_style_guide(project.storyboard_text) or "(follow the storyboard)"
@@ -411,6 +431,9 @@ def build_scene_prompts(
     # withhold anything the plan marks as revealed in a later scene, so the
     # writer cannot spoil an identity or a culprit before the reader learns it
     visible_board = filter_reveals(project.storyboard_text, scene_number)
+    # a character the plan brings in later is withheld here too, or the board
+    # hands this scene their name, role and employer anyway
+    visible_board = remove_character_lines(visible_board, not_yet)
     board_text = visible_board.strip()
     if "{style_guide}" in (tpl["system"] + tpl["user"]) and style_guide != "(follow the storyboard)":
         stripped = remove_style_guide(visible_board)
@@ -671,6 +694,115 @@ def find_repeated_opening(new_text: str, prev_text: str,
     return best
 
 
+_ASIDE_RE = re.compile(
+    r"\(([^()\n]{0,80}?\b(?:no relation|not to be confused|unrelated to|"
+    r"not the same|as mentioned|mentioned earlier|mentioned above|see above|"
+    r"see scene|as noted|note:)[^()\n]{0,80})\)", re.IGNORECASE)
+
+
+def find_author_aside(text: str) -> str:
+    """A parenthesis where the author steps out and talks to the reader.
+
+    When the plan gives two characters the same first name the writer often
+    patches over it in brackets — "David Hayes (no relation to Clara's
+    husband)" — which belongs in an editor's note, never in the story.
+    """
+    match = _ASIDE_RE.search(text)
+    return match.group(0) if match else ""
+
+
+_PROPER_PHRASE_RE = re.compile(
+    r"\b[A-Z][a-z]{2,}(?:\s+(?:&|and|of|the)\s+|\s+)[A-Z][a-z]{2,}"
+    r"(?:(?:\s+(?:&|and|of|the)\s+|\s+)[A-Z][a-z]{2,})?")
+
+
+# words that are capitalised only because a sentence started with them, so
+# "Since Stellar & Finch…" and "The Sterling & Finch offices…" compare equal
+_SENTENCE_STARTERS = {
+    "the", "a", "an", "and", "but", "or", "so", "if", "as", "at", "in", "on",
+    "for", "from", "by", "with", "to", "of", "since", "when", "while", "after",
+    "before", "then", "now", "later", "still", "yet", "because", "though",
+    "although", "however", "instead", "meanwhile", "perhaps", "maybe", "once",
+    "inside", "outside", "above", "below", "another", "each", "every", "both",
+    "all", "some", "no", "not", "this", "that", "these", "those", "here",
+    "there", "he", "she", "it", "they", "her", "his", "their", "its",
+}
+
+
+def _proper_phrases(text: str) -> dict:
+    """Capitalised multi-word names in `text` -> how often each occurs."""
+    counts: dict = {}
+    for phrase in _PROPER_PHRASE_RE.findall(text):
+        words = phrase.split()
+        while len(words) > 2 and words[0].lower() in _SENTENCE_STARTERS:
+            words = words[1:]
+        if len(words) < 2 or words[0].lower() in _SENTENCE_STARTERS:
+            continue
+        key = " ".join(words)
+        counts[key] = counts.get(key, 0) + 1
+    return counts
+
+
+def _is_name_drift(known: str, candidate: str) -> bool:
+    """True when `candidate` is `known` with one word subtly misspelt."""
+    from difflib import SequenceMatcher
+
+    a, b = known.split(), candidate.split()
+    if len(a) != len(b):
+        return False
+    differing = [(x, y) for x, y in zip(a, b) if x.lower() != y.lower()]
+    if len(differing) != 1:
+        return False
+    x, y = differing[0][0].lower(), differing[0][1].lower()
+    if len(x) < 4 or len(y) < 4 or abs(len(x) - len(y)) > 3:
+        return False
+    if x[:3] != y[:3]:
+        return False  # a different name, not a slip of the same one
+    return SequenceMatcher(None, x, y).ratio() >= 0.5
+
+
+def find_renamed_entity(text: str, established: str) -> str:
+    """A name from earlier in the story, respelt.
+
+    Long stories drift: a firm called Sterling & Finch for five scenes becomes
+    "Stellar & Finch" in the sixth. Only names already used at least twice
+    count as established, so a genuine new character is never flagged.
+    """
+    known = [name for name, count in _proper_phrases(established).items()
+             if count >= 2]
+    if not known:
+        return ""
+    for candidate in _proper_phrases(text):
+        if candidate in known:
+            continue
+        for name in known:
+            if _is_name_drift(name, candidate):
+                return f"“{candidate}” (established as “{name}”)"
+    return ""
+
+
+_LEADING_JUNK_RE = re.compile(r"^[\s\"'“”‘’*_—–-]+")
+
+
+def _opening_words(text: str, count: int = 2) -> list:
+    words = _LEADING_JUNK_RE.sub("", text).split()
+    return [w.strip(".,;:!?\"'“”’—–").lower() for w in words[:count]]
+
+
+def find_formulaic_opening(new_text: str, prev_text: str) -> str:
+    """Two scenes in a row opening with the same subject and verb.
+
+    Not a copied sentence — "Clara rises from the chair" after "Clara rises
+    from the stool" — so the verbatim check misses it, but read end to end it
+    makes every scene start the same way.
+    """
+    new_open = _opening_words(new_text)
+    prev_open = _opening_words(prev_text)
+    if len(new_open) < 2 or new_open != prev_open:
+        return ""
+    return " ".join(new_open)
+
+
 def generate_scene(
     cfg: SectionConfig,
     project: StoryProject,
@@ -694,51 +826,71 @@ def generate_scene(
                                     cancel, on_chunk).strip()
     text = strip_scene_artifacts(text, project.scenes[index].title)
 
-    scene_ref = find_scene_reference(text)
-    if scene_ref:
-        msg = (f"⚠ Scene {index + 1} refers to the story's own plan in the "
-               f"prose (“{scene_ref}”) — regenerate it, or delete that phrase.")
+    project.scenes[index].issues = check_scene(project, index, text)
+    return text
+
+
+def check_scene(project: StoryProject, index: int, text: str) -> list:
+    """Every continuity problem detectable in scene `index`'s finished text.
+
+    Returns the warnings (also logged and pushed to the status bar) so they
+    can be stored on the scene and read after a long batch run.
+    """
+    number = index + 1
+    issues: list = []
+
+    def warn(message: str) -> None:
+        msg = f"⚠ Scene {number} {message}"
+        issues.append(msg)
         applog.log("scene", msg)
         if NOTIFY is not None:
             NOTIFY(msg)
+
+    scene_ref = find_scene_reference(text)
+    if scene_ref:
+        warn(f"refers to the story's own plan in the prose (“{scene_ref}”) — "
+             "regenerate it, or delete that phrase.")
 
     stub = find_placeholder_stub(text)
     if stub:
-        msg = (f"⚠ Scene {index + 1} contains an unwritten placeholder "
-               f"{stub} — regenerate the scene, or edit it by hand.")
-        applog.log("scene", msg)
-        if NOTIFY is not None:
-            NOTIFY(msg)
+        warn(f"contains an unwritten placeholder {stub} — regenerate the "
+             "scene, or edit it by hand.")
 
     label = find_role_label(text)
     if label:
-        msg = (f"⚠ Scene {index + 1} uses the planning label “{label}” as a "
-               "name — give that character a real name and regenerate.")
-        applog.log("scene", msg)
-        if NOTIFY is not None:
-            NOTIFY(msg)
+        warn(f"uses the planning label “{label}” as a name — give that "
+             "character a real name and regenerate.")
 
     clash = find_honorific_conflict(text)
     if clash:
-        msg = (f"⚠ Scene {index + 1} calls one character both Mr and Ms "
-               f"({clash}) — the character changed sex mid-scene.")
-        applog.log("scene", msg)
-        if NOTIFY is not None:
-            NOTIFY(msg)
+        warn(f"calls one character both Mr and Ms ({clash}) — the character "
+             "changed sex mid-scene.")
 
-    # the writer sometimes restarts the previous scene instead of continuing
+    aside = find_author_aside(text)
+    if aside:
+        warn(f"steps out of the story to explain something to the reader "
+             f"{aside} — usually a sign two characters share a name.")
+
+    established = "\n".join([project.storyboard_text]
+                            + [s.text for s in project.scenes[:index]])
+    drift = find_renamed_entity(text, established)
+    if drift:
+        warn(f"respells a name established earlier: {drift}.")
+
     if index > 0 and text:
         prev = project.scenes[index - 1].text
-        repeat = find_repeated_opening(text, prev) if prev.strip() else ""
-        if repeat:
-            msg = (f"⚠ Scene {index + 1} opens by repeating {len(repeat)} "
-                   f"characters of scene {index}: “{repeat[:70]}…” — "
-                   "regenerate it, or use a context mode that sends less of "
-                   "the previous scene.")
-            applog.log("scene", msg)
-            if NOTIFY is not None:
-                NOTIFY(msg)
-    return text
+        if prev.strip():
+            # the writer sometimes restarts the previous scene verbatim
+            repeat = find_repeated_opening(text, prev)
+            if repeat:
+                warn(f"opens by repeating {len(repeat)} characters of scene "
+                     f"{index}: “{repeat[:70]}…” — regenerate it, or use a "
+                     "context mode that sends less of the previous scene.")
+            elif find_formulaic_opening(text, prev):
+                warn(f"and scene {index} both open with "
+                     f"“{find_formulaic_opening(text, prev)}…” — vary how "
+                     "scenes begin.")
+    return issues
 
 
 def generate_summary(

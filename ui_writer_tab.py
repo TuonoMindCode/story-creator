@@ -97,6 +97,13 @@ class WriterTab(QWidget):
         rl.setContentsMargins(0, 0, 0, 0)
         self.scene_label = QLabel("")
         rl.addWidget(self.scene_label)
+        # continuity warnings for the selected scene: a batch run writes them
+        # while nobody is watching the status bar, so they are kept per scene
+        self.issues_label = QLabel("")
+        self.issues_label.setWordWrap(True)
+        self.issues_label.setStyleSheet("color: #d08770;")
+        self.issues_label.hide()
+        rl.addWidget(self.issues_label)
         self.editor = QPlainTextEdit()
         self.editor.setPlaceholderText("Scene prose appears here (streamed live)…")
         self.editor.textChanged.connect(self._text_edited)
@@ -163,9 +170,8 @@ class WriterTab(QWidget):
             self.header.setText("No story project — start one from the Storyboards tab.")
         else:
             self.header.setText(f"Story: {story.title}")
-            for i, scene in enumerate(story.scenes, 1):
-                icon = STATUS_ICONS.get(scene.status, "○")
-                self.list.addItem(f"{icon}  Scene {i}: {scene.title or '(untitled)'}")
+            for i, scene in enumerate(story.scenes):
+                self.list.addItem(self._item_text(i, scene))
         self._loading = False
         if self.list.count():
             self.list.setCurrentRow(0)
@@ -173,15 +179,28 @@ class WriterTab(QWidget):
         else:
             self.editor.clear()
             self.scene_label.setText("")
+            self.issues_label.hide()
+
+    def _show_issues(self, scene):
+        issues = list(getattr(scene, "issues", []) or [])
+        if issues and scene.status == prj.SCENE_EDITED:
+            # the warnings describe the text as generated, not as it stands now
+            issues.insert(0, "Found when the scene was written — you have "
+                             "edited it since:")
+        self.issues_label.setText("\n".join(issues))
+        self.issues_label.setVisible(bool(issues))
+
+    def _item_text(self, index: int, scene) -> str:
+        icon = STATUS_ICONS.get(scene.status, "○")
+        flag = "  ⚠" if getattr(scene, "issues", None) else ""
+        return f"{icon}  Scene {index + 1}: {scene.title or '(untitled)'}{flag}"
 
     def _update_item(self, index: int):
         story = self.state.project
         if story is None or not (0 <= index < self.list.count()):
             return
-        scene = story.scenes[index]
-        icon = STATUS_ICONS.get(scene.status, "○")
         self.list.item(index).setText(
-            f"{icon}  Scene {index + 1}: {scene.title or '(untitled)'}")
+            self._item_text(index, story.scenes[index]))
 
     def _selected(self, row: int):
         story = self.state.project
@@ -208,6 +227,7 @@ class WriterTab(QWidget):
                   else "summarizing…" if summarizing else scene.status)
         self.scene_label.setText(
             f"Scene {row + 1}: {scene.title}   [{status}]")
+        self._show_issues(scene)
         self._update_counter(text)
         self._update_budget(row)
 

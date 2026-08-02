@@ -179,6 +179,30 @@ def extract_characters(text: str) -> list[tuple[str, str]]:
     return out
 
 
+def remove_character_lines(text: str, names) -> str:
+    """The story board with the given characters' entries taken out.
+
+    The board lists the whole cast, so a scene set before someone walks in is
+    still told who they are and where they work — which is how a hiring
+    manager from scene 3 ends up standing in the office in scene 1.
+    """
+    wanted = {n.strip().lower() for n in names if n and n.strip()}
+    if not wanted:
+        return text
+    m = re.search(r"^#+\s*(?:Main\s+)?Characters\s*\n(.*?)(?=^#\s|\Z)", text,
+                  re.MULTILINE | re.DOTALL | re.IGNORECASE)
+    if not m:
+        return text
+    kept = []
+    for line in m.group(1).splitlines():
+        hit = _CHAR_LINE_RE.match(line.strip())
+        if hit and hit.group(1).strip().strip("*_ ").lower() in wanted:
+            continue
+        kept.append(line)
+    section = "\n".join(kept)
+    return text[:m.start(1)] + section + text[m.end(1):]
+
+
 def confusable_name_pairs(names) -> list[tuple[str, str]]:
     """Pairs of character names that are too easy to confuse.
 
@@ -285,6 +309,10 @@ class Scene:
     summary: str = ""
     status: str = SCENE_OUTLINED
     summary_stale: bool = False
+    # continuity problems found in this scene's text after it was written.
+    # Kept on the scene so a batch run's warnings survive to be read later,
+    # instead of scrolling past in the status bar.
+    issues: list = field(default_factory=list)
 
     def outline_block(self, number: int) -> str:
         """The scene's plan as sent to the writer; empty fields are omitted so
@@ -362,6 +390,22 @@ class StoryProject:
     def cast_first_scene(self, name: str) -> int | None:
         scenes = self.cast_scenes(name)
         return min(scenes) if scenes else None
+
+    def outline_first_scene(self, name: str) -> int | None:
+        """The first scene whose plan mentions `name`, or None if never.
+
+        The story board lists the whole cast, so without this every scene is
+        told about people it has not met yet — and the writer drops the boss
+        of a company the heroine only visits in scene 3 into scene 1.
+        """
+        words = [w for w in self._name_words(name) if len(w) >= 3]
+        if not words:
+            return None
+        for number, scene in enumerate(self.scenes, 1):
+            plan = scene.outline_block(number).lower()
+            if any(re.search(r"\b" + re.escape(w) + r"\b", plan) for w in words):
+                return number
+        return None
 
     _NAME_TITLES = {"dr", "dr.", "doctor", "professor", "prof", "prof.", "mr",
                     "mr.", "mrs", "mrs.", "ms", "ms.", "miss", "detective",
