@@ -581,11 +581,21 @@ def test_formulaic_opening_detection():
     f = pipeline.find_formulaic_opening
     prev = "Clara rises from the imposing chair at Apex Solutions, exhausted."
     same = "Clara rises slowly from the vinyl stool at The Daily Grind."
-    assert f(same, prev) == "clara rises", f(same, prev)
-    fresh = "The low hum of the refrigerator fills the kitchen."
+    assert f(same, prev) == "“clara rises…”", f(same, prev)
+    fresh = "The low hum of the refrigerator fills the kitchen while she reads."
     assert f(fresh, prev) == ""
     # a shared opening article alone is not a pattern
     assert f("The rain fell.", "The morning came slowly.") == ""
+
+    # both scenes open on a sensation carried over from the scene before
+    residue_a = ("The cool, sterile air of Clara Jennings' suite still clings "
+                 "faintly to the charcoal wool of Eleanor's suit jacket.")
+    residue_b = ("The sharp resonance of Brennan's pronouncement still "
+                 "vibrates faintly inside Eleanor Vance's skull.")
+    assert f(residue_b, residue_a) == "on the lingering residue of the scene before"
+    # one such opening is a transition, not a tic
+    assert f(residue_b, fresh) == ""
+    assert f(fresh, residue_a) == ""
     print("formulaic-opening detection OK")
 
 

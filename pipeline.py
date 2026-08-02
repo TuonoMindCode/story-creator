@@ -789,18 +789,41 @@ def _opening_words(text: str, count: int = 2) -> list:
     return [w.strip(".,;:!?\"'“”’—–").lower() for w in words[:count]]
 
 
-def find_formulaic_opening(new_text: str, prev_text: str) -> str:
-    """Two scenes in a row opening with the same subject and verb.
+_LINGER_RE = re.compile(
+    r"\b(?:still|remains?|remaining|lingers?|lingering|clings?|clinging|"
+    r"echoes?|echoing|hangs?|hanging|persists?|persisting|hovers?|hovering|"
+    r"vibrates?|vibrating|trails?|trailing|settles?|settling)\b",
+    re.IGNORECASE)
+_OPENING_DETERMINERS = {"the", "a", "an", "that", "this", "her", "his",
+                        "their", "its"}
 
-    Not a copied sentence — "Clara rises from the chair" after "Clara rises
-    from the stool" — so the verbatim check misses it, but read end to end it
-    makes every scene start the same way.
+
+def _opens_on_residue(text: str) -> bool:
+    """The scene opens on what is left over from the one before it.
+
+    "The cool air of Clara's suite still clings to her jacket…" — a sensation
+    carried in from the previous scene, held in the opening noun phrase. One
+    is a graceful transition; every scene in a row is a tic.
+    """
+    words = _LEADING_JUNK_RE.sub("", text).split()[:25]
+    if len(words) < 6 or words[0].lower() not in _OPENING_DETERMINERS:
+        return False
+    return bool(_LINGER_RE.search(" ".join(words)))
+
+
+def find_formulaic_opening(new_text: str, prev_text: str) -> str:
+    """How two scenes in a row start the same way, or "" if they don't.
+
+    Neither case is a copied sentence, so the verbatim check misses both, but
+    read end to end they make every scene begin identically.
     """
     new_open = _opening_words(new_text)
-    prev_open = _opening_words(prev_text)
-    if len(new_open) < 2 or new_open != prev_open:
-        return ""
-    return " ".join(new_open)
+    if len(new_open) >= 2 and new_open == _opening_words(prev_text):
+        # "Clara rises from the chair" after "Clara rises from the stool"
+        return "“" + " ".join(new_open) + "…”"
+    if _opens_on_residue(new_text) and _opens_on_residue(prev_text):
+        return "on the lingering residue of the scene before"
+    return ""
 
 
 def generate_scene(
@@ -886,10 +909,11 @@ def check_scene(project: StoryProject, index: int, text: str) -> list:
                 warn(f"opens by repeating {len(repeat)} characters of scene "
                      f"{index}: “{repeat[:70]}…” — regenerate it, or use a "
                      "context mode that sends less of the previous scene.")
-            elif find_formulaic_opening(text, prev):
-                warn(f"and scene {index} both open with "
-                     f"“{find_formulaic_opening(text, prev)}…” — vary how "
-                     "scenes begin.")
+            else:
+                same_shape = find_formulaic_opening(text, prev)
+                if same_shape:
+                    warn(f"and scene {index} both open {same_shape} — vary "
+                         "how scenes begin.")
     return issues
 
 

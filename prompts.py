@@ -143,6 +143,9 @@ _DEFAULT = {
             "- Any character you introduce yourself must get a name that is "
             "clearly distinct from everyone already in the story — never give "
             "an unrelated character the same surname as another.\n"
+            "- Decide each new character's pronouns in the sentence that "
+            "introduces them and use only those for the rest of the story. "
+            "Never call the same person both 'she' and 'they'.\n"
             "- Never leave anything unwritten. If you do not know a detail, "
             "invent one that fits; never write a bracketed stand-in such as "
             "[some letters], [insert name] or [description].\n"
@@ -197,7 +200,10 @@ _DEFAULT = {
         "user": (
             "Summarize the following scene in about 120 words. Include the key events, "
             "any character or relationship developments, and every concrete fact that "
-            "must stay consistent later in the story. Output only the summary.\n\n"
+            "must stay consistent later in the story. Name the person responsible for "
+            "every judgement, accusation, offer or decision — write who said it, never "
+            "just that it was said, or a later scene will credit it to the wrong "
+            "character. Output only the summary.\n\n"
             "SCENE TEXT:\n{scene_text}"
         ),
     },
