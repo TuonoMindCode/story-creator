@@ -562,6 +562,27 @@ def strip_scene_artifacts(text: str, title: str = "") -> str:
     return out.strip()
 
 
+_PLACEHOLDER_WORDS = (
+    "some", "insert", "todo", "tbd", "placeholder", "xxx", "here", "etc",
+    "your ", "name of", "letters", "description", "fill in", "add ",
+)
+_BRACKET_RE = re.compile(r"\[([^\[\]\n]{1,60})\]")
+
+
+def find_placeholder_stub(text: str) -> str:
+    """A bracketed stub the model left instead of writing something.
+
+    Catches things like "[some letters]" or "[insert name]" in the prose.
+    """
+    for match in _BRACKET_RE.finditer(text):
+        inner = match.group(1).strip().lower()
+        if not inner:
+            continue
+        if any(word in inner for word in _PLACEHOLDER_WORDS):
+            return match.group(0)
+    return ""
+
+
 def find_repeated_opening(new_text: str, prev_text: str,
                           min_len: int = 60) -> str:
     """Longest chunk the new scene's opening copies from the previous scene.
@@ -608,6 +629,14 @@ def generate_scene(
     text = _run_with_thinking_retry(cfg, "scene", system, user,
                                     cancel, on_chunk).strip()
     text = strip_scene_artifacts(text, project.scenes[index].title)
+
+    stub = find_placeholder_stub(text)
+    if stub:
+        msg = (f"⚠ Scene {index + 1} contains an unwritten placeholder "
+               f"{stub} — regenerate the scene, or edit it by hand.")
+        applog.log("scene", msg)
+        if NOTIFY is not None:
+            NOTIFY(msg)
 
     # the writer sometimes restarts the previous scene instead of continuing
     if index > 0 and text:

@@ -376,6 +376,19 @@ def test_outline_block():
     print("outline block formatting OK")
 
 
+def test_placeholder_stub_detection():
+    f = pipeline.find_placeholder_stub
+    # stubs the model leaves instead of writing something
+    assert f("She read the Cyrillic characters: [some letters] on the tag.") \
+        == "[some letters]"
+    assert f("He greeted [insert name] warmly.") == "[insert name]"
+    assert f("The sign read [TODO] in red paint.") == "[TODO]"
+    # real prose with brackets must not be flagged
+    assert f("The report [1962, unsigned] lay on the desk.") == ""
+    assert f("She whispered his name. He did not answer.") == ""
+    print("placeholder stub detection OK")
+
+
 def test_repeated_opening_detection():
     f = pipeline.find_repeated_opening
     prev = ("She walked to the window and watched the rain. "
@@ -557,6 +570,7 @@ if __name__ == "__main__":
     test_cast_extraction()
     test_cast_tracking()
     test_outline_block()
+    test_placeholder_stub_detection()
     test_repeated_opening_detection()
     test_strip_scene_artifacts()
     test_log_trim()
