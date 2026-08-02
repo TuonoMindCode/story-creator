@@ -4,6 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -94,7 +95,15 @@ class LorebookTab(QWidget):
         self.content_edit = QPlainTextEdit()
         self.content_edit.setPlaceholderText("Facts that must stay consistent…")
         self.always_check = QCheckBox("Always include (even if the keywords don't appear)")
+        self.pronouns_box = QComboBox()
+        self.pronouns_box.setEditable(True)
+        self.pronouns_box.addItems(list(prj.PRONOUN_CHOICES))
+        self.pronouns_box.setToolTip(
+            "Sent with this character to every scene so their gender cannot "
+            "drift. Leave blank for places, objects or world facts.")
+        self.pronouns_box.editTextChanged.connect(self._field_changed)
         form.addRow("Name", self.name_edit)
+        form.addRow("Pronouns", self.pronouns_box)
         form.addRow("Keywords", self.keywords_edit)
         form.addRow("Facts", self.content_edit)
         form.addRow("", self.always_check)
@@ -117,7 +126,15 @@ class LorebookTab(QWidget):
         self.cast_desc_edit.setPlaceholderText(
             "What the scenes are told about this character…")
         self.cast_desc_edit.textChanged.connect(self._cast_desc_edited)
+        self.cast_pronouns_box = QComboBox()
+        self.cast_pronouns_box.setEditable(True)
+        self.cast_pronouns_box.addItems(list(prj.PRONOUN_CHOICES))
+        self.cast_pronouns_box.setToolTip(
+            "Sent to every later scene so this character's gender cannot "
+            "drift. Detected from the first scene they appear in.")
+        self.cast_pronouns_box.editTextChanged.connect(self._cast_pronouns_edited)
         cf.addRow("Character", self.cast_name_label)
+        cf.addRow("Pronouns", self.cast_pronouns_box)
         cf.addRow("First appears", self.cast_first_label)
         cf.addRow("Appears in", self.cast_scenes_label)
         cf.addRow("Facts", self.cast_desc_edit)
@@ -219,8 +236,17 @@ class LorebookTab(QWidget):
         self.cast_scenes_label.setText(
             ", ".join(f"scene {s}" for s in scenes) if scenes else "—")
         self.cast_desc_edit.setPlainText(story.cast_desc(person))
+        self.cast_pronouns_box.setEditText(story.cast_pronouns(person))
         self._loading = False
         self.right_stack.setCurrentIndex(1)
+
+    def _cast_pronouns_edited(self):
+        story = self.state.project
+        person = self._cast_name()
+        if self._loading or story is None or not person:
+            return
+        story.set_cast_pronouns(person, self.cast_pronouns_box.currentText())
+        self.state.autosave_project()
 
     def _cast_desc_edited(self):
         story = self.state.project
@@ -249,7 +275,7 @@ class LorebookTab(QWidget):
             return
         self.entries.append(LorebookEntry(
             name=person, keywords=[person], content=story.cast_desc(person),
-            always_include=True))
+            always_include=True, pronouns=story.cast_pronouns(person)))
         self._save()
         self._reload_list()
         self.main.statusBar().showMessage(
@@ -323,6 +349,7 @@ class LorebookTab(QWidget):
         self.keywords_edit.clear()
         self.content_edit.clear()
         self.always_check.setChecked(False)
+        self.pronouns_box.setEditText("")
         self._loading = False
 
     def _selected(self, row: int):
@@ -338,6 +365,7 @@ class LorebookTab(QWidget):
         self.keywords_edit.setText(", ".join(e.keywords))
         self.content_edit.setPlainText(e.content)
         self.always_check.setChecked(e.always_include)
+        self.pronouns_box.setEditText(e.pronouns)
         self._loading = False
 
     def _field_changed(self, *args):
@@ -349,6 +377,7 @@ class LorebookTab(QWidget):
         e.keywords = [k.strip() for k in self.keywords_edit.text().split(",") if k.strip()]
         e.content = self.content_edit.toPlainText().strip()
         e.always_include = self.always_check.isChecked()
+        e.pronouns = self.pronouns_box.currentText().strip()
         self.list.item(row).setText(e.name or "(unnamed)")
         self._save()
 

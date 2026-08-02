@@ -40,12 +40,17 @@ def unique_path(directory: Path, stem: str, suffix: str) -> Path:
 # Lorebook
 # ---------------------------------------------------------------------------
 
+# pronoun options offered for characters; free text is allowed too
+PRONOUN_CHOICES = ("", "she/her", "he/him", "they/them")
+
+
 @dataclass
 class LorebookEntry:
     name: str = ""
     keywords: list[str] = field(default_factory=list)
     content: str = ""
     always_include: bool = False
+    pronouns: str = ""   # kept separate so it can never be lost in the prose
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -57,7 +62,12 @@ class LorebookEntry:
             keywords=list(d.get("keywords", [])),
             content=d.get("content", ""),
             always_include=bool(d.get("always_include", False)),
+            pronouns=d.get("pronouns", ""),
         )
+
+    def as_fact_line(self) -> str:
+        who = f"{self.name} ({self.pronouns})" if self.pronouns else self.name
+        return f"- {who}: {self.content}"
 
 
 def lorebook_path(storyboard_name: str) -> Path:
@@ -330,11 +340,21 @@ class StoryProject:
         """Accept both the current dict form and the earlier plain string."""
         if isinstance(value, dict):
             return {"desc": str(value.get("desc", "")),
-                    "scenes": [int(s) for s in value.get("scenes", [])]}
-        return {"desc": str(value), "scenes": []}
+                    "scenes": [int(s) for s in value.get("scenes", [])],
+                    "pronouns": str(value.get("pronouns", ""))}
+        return {"desc": str(value), "scenes": [], "pronouns": ""}
 
     def cast_desc(self, name: str) -> str:
         return self._cast_record(self.cast.get(name, "")).get("desc", "")
+
+    def cast_pronouns(self, name: str) -> str:
+        return self._cast_record(self.cast.get(name, "")).get("pronouns", "")
+
+    def set_cast_pronouns(self, name: str, pronouns: str) -> None:
+        if name in self.cast:
+            rec = self._cast_record(self.cast[name])
+            rec["pronouns"] = pronouns.strip()
+            self.cast[name] = rec
 
     def cast_scenes(self, name: str) -> list[int]:
         return self._cast_record(self.cast.get(name, "")).get("scenes", [])
@@ -368,13 +388,17 @@ class StoryProject:
                 return existing
         return ""
 
-    def note_cast(self, name: str, desc: str, scene_number: int | None = None) -> bool:
+    def note_cast(self, name: str, desc: str, scene_number: int | None = None,
+                  pronouns: str = "") -> bool:
         """Record a character (and the scene they appear in). True if new."""
         existing = name if name in self.cast else self._same_person(name)
         is_new = not existing
         rec = self._cast_record(self.cast.get(existing, {"desc": desc, "scenes": []}))
         if is_new or not rec["desc"]:
             rec["desc"] = desc
+        # first pronouns win: a later scene must not flip an established one
+        if pronouns and not rec.get("pronouns"):
+            rec["pronouns"] = pronouns.strip()
         if scene_number and scene_number not in rec["scenes"]:
             rec["scenes"].append(scene_number)
             rec["scenes"].sort()

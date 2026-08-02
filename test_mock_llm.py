@@ -70,8 +70,8 @@ def pick_response(system: str, user: str) -> str:
     if "story board" in blob or "storyboard" in blob and "scene" not in blob[:200]:
         pass
     if "list every character in this scene" in blob:
-        return ("Inspector Hale: lead detective, male, retired opera singer.\n"
-                "Lady Blackwood: widow of the manor, female, hiding debts.\n"
+        return ("Inspector Hale (he/him): lead detective, retired opera singer.\n"
+                "Lady Blackwood (she/her): widow of the manor, hiding debts.\n"
                 "Beginning: this heading must be filtered out.")
     if "break the following story into" in blob:
         return MOCK_OUTLINE
@@ -342,8 +342,10 @@ def main():
     cast = pipeline.generate_cast_update(cfg, "scene prose here", {})
     assert set(cast) == {"Inspector Hale", "Lady Blackwood"}, cast
     assert "Beginning" not in cast, "a heading was recorded as a character"
-    assert "male" in cast["Inspector Hale"]
-    print("automatic character tracking OK")
+    assert "detective" in cast["Inspector Hale"]["desc"]
+    assert cast["Inspector Hale"]["pronouns"] == "he/him", cast["Inspector Hale"]
+    assert cast["Lady Blackwood"]["pronouns"] == "she/her"
+    print("automatic character tracking OK (with pronouns)")
 
     # ollama without a model must fail with a clear message, not a server 400
     import backends

@@ -377,6 +377,40 @@ def test_cast_tracking():
     print("cast tracking OK")
 
 
+def test_pronoun_tracking():
+    from backends import SectionConfig
+    from project import LorebookEntry
+
+    # pronouns are parsed out of the extractor's "Name (she/her): facts" line
+    assert pipeline._split_pronouns("Elara Petrova (she/her)") == \
+        ("Elara Petrova", "she/her")
+    assert pipeline._split_pronouns("Dr. Moreau (he/him)") == ("Dr. Moreau", "he/him")
+    assert pipeline._split_pronouns("Clara Davies") == ("Clara Davies", "")
+
+    story = StoryProject(name="p", storyboard_text="# Title\nT\n",
+                         scenes=[Scene(title="One", beat="b", text="x"),
+                                 Scene(title="Two", beat="b2")])
+    pipeline.merge_cast(story, {
+        "Clara Davies": {"desc": "the friend", "pronouns": "she/her"}}, 1)
+    assert story.cast_pronouns("Clara Davies") == "she/her"
+    # a later scene must not flip an established gender
+    pipeline.merge_cast(story, {
+        "Clara Davies": {"desc": "the friend", "pronouns": "he/him"}}, 2)
+    assert story.cast_pronouns("Clara Davies") == "she/her"
+    # …and they reach the scene prompt
+    system, _ = pipeline.build_scene_prompts(SectionConfig(), story, 1, [])
+    assert "Clara Davies (she/her)" in system, system
+
+    # lorebook entries carry pronouns too, and survive save/load
+    entry = LorebookEntry(name="Silas Thorne", content="the boss",
+                          pronouns="he/him", always_include=True)
+    assert entry.as_fact_line() == "- Silas Thorne (he/him): the boss"
+    assert LorebookEntry.from_dict(entry.to_dict()).pronouns == "he/him"
+    # entries written before this field still load
+    assert LorebookEntry.from_dict({"name": "Old", "content": "c"}).pronouns == ""
+    print("pronoun tracking OK")
+
+
 def test_outline_block():
     s = Scene(title="The Deficit Report", beat="She counts what is left.")
     block = s.outline_block(3)
@@ -676,6 +710,7 @@ if __name__ == "__main__":
     test_language_option()
     test_cast_extraction()
     test_cast_tracking()
+    test_pronoun_tracking()
     test_outline_block()
     test_confusable_name_detection()
     test_reveal_gating()

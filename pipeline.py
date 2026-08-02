@@ -273,7 +273,7 @@ def match_lorebook(entries: list[LorebookEntry], *scan_texts: str) -> str:
             picked.append(entry)
     if not picked:
         return "(none)"
-    return "\n".join(f"- {e.name}: {e.content}" for e in picked)
+    return "\n".join(e.as_fact_line() for e in picked)
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +395,9 @@ def build_scene_prompts(
         for n, d in people.items():
             first = project.cast_first_scene(n)
             seen = f" [since scene {first}]" if first else ""
-            lines.append(f"- {n}{seen}: {d}")
+            pron = project.cast_pronouns(n)
+            who = f"{n} ({pron})" if pron else n
+            lines.append(f"- {who}{seen}: {d}")
         cast_block = ("The cast so far (these names, roles and genders are "
                       "fixed — never rename or re-invent them):\n"
                       + "\n".join(lines))
@@ -792,9 +794,11 @@ def generate_cast_update(
     user = (
         "List every character in this scene, one per line, in exactly this "
         "format:\n"
-        "Name: role or relationship, gender, and any fact that must stay "
+        "Name (pronouns): role or relationship, and any fact that must stay "
         "consistent (max 20 words)\n\n"
-        "Use the name the story uses. Output only these lines, nothing else."
+        "Pronouns must be she/her, he/him or they/them, taken from how the "
+        "scene refers to them. Use the name the story uses. Output only these "
+        "lines, nothing else."
         + known_note + "\n\nSCENE:\n" + scene_text.strip()
     )
     try:
@@ -804,10 +808,22 @@ def generate_cast_update(
         return {}
     found: dict = {}
     for entry in parse_character_entries(text):
-        name = entry.name.strip()
+        name, pronouns = _split_pronouns(entry.name.strip())
         if name and entry.content.strip() and _looks_like_person(name):
-            found[name] = entry.content.strip()
+            found[name] = {"desc": entry.content.strip(), "pronouns": pronouns}
     return found
+
+
+_PRONOUN_RE = re.compile(r"\s*\(([^)]*\b(?:she|he|they)\s*/\s*\w+[^)]*)\)\s*$",
+                         re.IGNORECASE)
+
+
+def _split_pronouns(name: str) -> tuple:
+    """'Elara Petrova (she/her)' -> ('Elara Petrova', 'she/her')."""
+    match = _PRONOUN_RE.search(name)
+    if not match:
+        return name, ""
+    return name[:match.start()].strip(), match.group(1).strip().lower()
 
 
 # section headings and narrative labels a model may emit as "Name:" lines
@@ -834,8 +850,12 @@ def merge_cast(project: StoryProject, found: dict,
                scene_number: Optional[int] = None) -> int:
     """Record characters seen in a scene; returns how many are new."""
     added = 0
-    for name, desc in found.items():
-        if project.note_cast(name, desc, scene_number):
+    for name, record in found.items():
+        if isinstance(record, dict):
+            desc, pronouns = record.get("desc", ""), record.get("pronouns", "")
+        else:                       # tolerate the older plain-string form
+            desc, pronouns = str(record), ""
+        if project.note_cast(name, desc, scene_number, pronouns):
             added += 1
     if added:
         # a name only revealed mid-story can collide with one from the plan
