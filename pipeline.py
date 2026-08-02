@@ -19,7 +19,9 @@ from project import (
     Scene,
     StoryProject,
     extract_characters,
+    confusable_name_pairs,
     extract_style_guide,
+    find_confusable_names,
     filter_reveals,
     remove_style_guide,
 )
@@ -297,8 +299,16 @@ def generate_storyboard(
     user = prompts.fill(tpl["user"], values)
     if plan_in_language and _wants_language(language):
         system += f"\n\nWrite the entire story board in {language}."
-    return _run_with_thinking_retry(cfg, "storyboard", system, user,
+    text = _run_with_thinking_retry(cfg, "storyboard", system, user,
                                     cancel, on_chunk).strip()
+    for first, second in find_confusable_names(text):
+        msg = (f"⚠ The story board gives two characters near-identical names: "
+               f"“{first}” and “{second}” — rename one in the Storyboards tab "
+               "before writing, or the scenes will confuse them.")
+        applog.log("storyboard", msg)
+        if NOTIFY is not None:
+            NOTIFY(msg)
+    return text
 
 
 def generate_outline(
@@ -779,7 +789,24 @@ def merge_cast(project: StoryProject, found: dict,
     for name, desc in found.items():
         if project.note_cast(name, desc, scene_number):
             added += 1
+    if added:
+        # a name only revealed mid-story can collide with one from the plan
+        # (a victim revealed as 'Elara Petrova' beside an examiner 'Petrov')
+        for first, second in confusable_name_pairs(list(project.cast)):
+            pair = tuple(sorted((first, second)))
+            if pair in _WARNED_NAME_PAIRS:
+                continue
+            _WARNED_NAME_PAIRS.add(pair)
+            msg = (f"⚠ Two characters now have near-identical names: "
+                   f"“{first}” and “{second}”. Rename one (Lorebook tab) or "
+                   "later scenes are likely to confuse them.")
+            applog.log("cast", msg)
+            if NOTIFY is not None:
+                NOTIFY(msg)
     return added
+
+
+_WARNED_NAME_PAIRS: set = set()
 
 
 def generate_character_cards(

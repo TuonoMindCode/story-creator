@@ -392,6 +392,37 @@ def test_outline_block():
     print("outline block formatting OK")
 
 
+def test_confusable_name_detection():
+    from project import find_confusable_names
+    board = ("# Main Characters\n"
+             "**Dr. Anya Petrov** — the medical examiner, female.\n"
+             "**Elara Petrova** — the victim, a tailor.\n"
+             "**Vera Holstrom** — the detective.\n")
+    pairs = find_confusable_names(board)
+    flat = {tuple(sorted(p)) for p in pairs}
+    assert ("Dr. Anya Petrov", "Elara Petrova") in flat, pairs
+    assert len(pairs) == 1, f"Holstrom should not be flagged: {pairs}"
+
+    # relatives sharing an identical surname are legitimate, not flagged
+    sisters = ("# Main Characters\n"
+               "**Sofia Rostova** — the sous chef.\n"
+               "**Elina Rostova** — her sister.\n")
+    assert find_confusable_names(sisters) == []
+    # ordinary distinct casts stay quiet
+    plain = ("# Main Characters\n"
+             "**Maya Thorne** — detective.\n"
+             "**Karin Volsky** — the victim.\n")
+    assert find_confusable_names(plain) == []
+    # the real case: the victim's name only appears once the story reveals it,
+    # so the clash shows up in the tracked cast rather than the storyboard
+    from project import confusable_name_pairs
+    tracked = ["Vera Holstrom", "Marcus Thorne", "Anya Petrov", "Elara Petrova"]
+    flagged = {tuple(sorted(p)) for p in confusable_name_pairs(tracked)}
+    assert ("Anya Petrov", "Elara Petrova") in flagged, flagged
+    assert len(flagged) == 1, flagged
+    print("confusable name detection OK")
+
+
 def test_reveal_gating():
     from project import filter_reveals
     board = (
@@ -628,6 +659,7 @@ if __name__ == "__main__":
     test_cast_extraction()
     test_cast_tracking()
     test_outline_block()
+    test_confusable_name_detection()
     test_reveal_gating()
     test_scene_reference_detection()
     test_placeholder_stub_detection()

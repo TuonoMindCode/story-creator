@@ -169,6 +169,33 @@ def extract_characters(text: str) -> list[tuple[str, str]]:
     return out
 
 
+def confusable_name_pairs(names) -> list[tuple[str, str]]:
+    """Pairs of character names that are too easy to confuse.
+
+    Catches accidental near-duplicates like 'Dr. Anya Petrov' and 'Elara
+    Petrova' — the same Slavic surname in its masculine and feminine form,
+    which a plain string comparison misses.
+    """
+    from difflib import SequenceMatcher
+
+    names = [n for n in names if n and n.split()]
+    pairs: list[tuple[str, str]] = []
+    for i, first in enumerate(names):
+        for second in names[i + 1:]:
+            a, b = first.split()[-1].lower(), second.split()[-1].lower()
+            if a == b or not a or not b:
+                continue  # identical surnames may well be relatives
+            ratio = SequenceMatcher(None, a, b).ratio()
+            if ratio >= 0.8 or a.startswith(b) or b.startswith(a):
+                pairs.append((first, second))
+    return pairs
+
+
+def find_confusable_names(text: str) -> list[tuple[str, str]]:
+    """Confusable pairs among the storyboard's listed characters."""
+    return confusable_name_pairs([n for n, _desc in extract_characters(text)])
+
+
 _REVEALS_RE = re.compile(r"^#+\s*Reveals\s*\n(.*?)(?=^#\s|\Z)",
                          re.MULTILINE | re.DOTALL | re.IGNORECASE)
 _REVEAL_LINE_RE = re.compile(r"^\s*[-*]?\s*scenes?\s*(\d+)\s*[:.\-–]\s*(.+)$",
