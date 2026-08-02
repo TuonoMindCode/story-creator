@@ -145,6 +145,7 @@ def main_test():
     outline_saw_scenes = []
     outline_saw_stream = []
     switch_checked = False
+    busy_switch_blocked = False
     main.tab_start.run_batch()
     t0 = time.time()
     while main.is_busy() and time.time() - t0 < 60:
@@ -164,6 +165,17 @@ def main_test():
             assert shown == wt._stream_buffer and shown, \
                 "switching back mid-stream lost the streamed text"
             switch_checked = True
+            # opening another story from the Complete Story tab must be
+            # refused while a generation is running
+            ct = main.tab_complete
+            ct.refresh_all()
+            if ct.list.count() and main.state.project is not None:
+                running = main.state.project
+                ct.list.setCurrentRow(ct.list.count() - 1)
+                qapp.processEvents()
+                ct._load_as_current()
+                qapp.processEvents()
+                busy_switch_blocked = main.state.project is running
         if main.tab_writer.editor.toPlainText():
             writer_saw_text.append(len(main.tab_writer.editor.toPlainText()))
         if main.tab_outline.list.count():
@@ -206,6 +218,8 @@ def main_test():
     assert "forced window" in main.tab_writer.summary_edit.toPlainText(), \
         "scene summary not shown in the writer tab"
     assert switch_checked, "mid-stream scene switch was never exercised"
+    assert busy_switch_blocked, \
+        "opening another story mid-generation was not blocked"
     assert summary_saw_text, \
         "scene summaries never streamed into the summary box during the batch"
     assert summary_saw_text[0] < summary_saw_text[-1] or len(summary_saw_text) > 1, \

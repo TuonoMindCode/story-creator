@@ -72,6 +72,7 @@ class CompleteTab(QWidget):
         splitter.setSizes([280, 900])
 
         self.state.project_changed.connect(self.refresh_all)
+        self.state.busy_changed.connect(self._busy_changed)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -122,9 +123,18 @@ class CompleteTab(QWidget):
             f"{len(text.split())} words · ≈{pipeline.estimate_tokens(text)} tokens"
             + ("  [current story]" if is_current else ""))
         self.view.setPlainText(text)
-        self.load_btn.setEnabled(not is_current)
+        self.load_btn.setEnabled(not is_current and not self.main.is_busy())
 
     # -- actions ------------------------------------------------------------------
+
+    def _busy_changed(self, busy: bool):
+        self.load_btn.setEnabled(not busy and self._shown is not None
+                                 and self._shown is not self.state.project)
+        self.load_btn.setToolTip(
+            "Finish or stop the current generation first."
+            if busy else
+            "Load this story into the Scene Outline / Scene Writer tabs to keep "
+            "working on it.")
 
     def refresh(self):
         """Re-render the currently selected story (used after scenes finish)."""
@@ -136,6 +146,12 @@ class CompleteTab(QWidget):
 
     def _load_as_current(self):
         if self._shown is None:
+            return
+        if self.main.is_busy():
+            # swapping the story under a running job would mix the two
+            self.main.statusBar().showMessage(
+                "A story is being generated — wait for it to finish (or press "
+                "Stop) before opening another one.")
             return
         self.state.project = self._shown
         self.state.project_changed.emit()

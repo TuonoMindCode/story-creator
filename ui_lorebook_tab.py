@@ -64,6 +64,13 @@ class LorebookTab(QWidget):
         self.cast_list.currentRowChanged.connect(self._cast_selected)
         ll.addWidget(self.cast_list, 1)
         cast_row = QHBoxLayout()
+        self.btn_cast_scan = QPushButton("Scan story for characters")
+        self.btn_cast_scan.setToolTip(
+            "Read every written scene of the current story and fill in the "
+            "cast. Use it for stories written before automatic tracking "
+            "existed, or to rebuild the list from scratch.")
+        self.btn_cast_scan.clicked.connect(self._scan_story_for_cast)
+        cast_row.addWidget(self.btn_cast_scan)
         self.btn_cast_keep = QPushButton("Copy to Lorebook")
         self.btn_cast_keep.setToolTip(
             "Save this tracked character as a permanent lorebook entry, so every "
@@ -135,6 +142,9 @@ class LorebookTab(QWidget):
         self.state.storyboards_changed.connect(self.refresh)
         self.state.project_changed.connect(self.refresh_cast)
         self.state.cast_changed.connect(self.refresh_cast)
+        self.state.busy_changed.connect(lambda _b: self.refresh_cast())
+        self.state.project_changed.connect(self.refresh_cast)
+        self.state.cast_changed.connect(self.refresh_cast)
         self.state.busy_changed.connect(lambda b: self.btn_import.setEnabled(not b))
         self.refresh()
 
@@ -165,6 +175,9 @@ class LorebookTab(QWidget):
         has = bool(cast)
         self.btn_cast_keep.setEnabled(has)
         self.btn_cast_del.setEnabled(has)
+        self.btn_cast_scan.setEnabled(
+            story is not None and any(s.text.strip() for s in story.scenes)
+            and not self.main.is_busy())
         if not has:
             self.cast_list.addItem(
                 "(nothing tracked yet — filled in as scenes are written)")
@@ -242,6 +255,41 @@ class LorebookTab(QWidget):
         self.main.statusBar().showMessage(
             f"'{person}' copied to the lorebook — every future story from this "
             "storyboard will include it.")
+
+    def _scan_story_for_cast(self):
+        """Rebuild the tracked cast by reading the story's written scenes."""
+        story = self.state.project
+        if story is None:
+            self.main.statusBar().showMessage("No story open.")
+            return
+        written = [(i + 1, s) for i, s in enumerate(story.scenes) if s.text.strip()]
+        if not written:
+            self.main.statusBar().showMessage("This story has no written scenes yet.")
+            return
+        cfg = self.state.runtime_cfg("summarizer").rolled()
+        language = self.state.ui.get("story_language", "English")
+
+        def job(worker):
+            total_new = 0
+            for number, scene in written:
+                if worker.cancel.is_set():
+                    break
+                worker.progress.emit(
+                    f"Reading scene {number} of {len(story.scenes)} for characters…")
+                found = pipeline.generate_cast_update(
+                    cfg, scene.text, story.cast, cancel=worker.cancel)
+                total_new += pipeline.merge_cast(story, found, number)
+            return total_new
+
+        def done(total_new):
+            self.state.autosave_project()
+            self.refresh_cast()
+            self.main.statusBar().showMessage(
+                f"Scan finished — {len(story.cast)} character(s) tracked "
+                f"({total_new} new).")
+
+        self.main.run_job(job, on_done=done,
+                          status="Scanning the story for characters…")
 
     def _forget_cast_entry(self):
         story = self.state.project
