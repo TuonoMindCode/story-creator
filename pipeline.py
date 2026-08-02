@@ -562,6 +562,22 @@ def strip_scene_artifacts(text: str, title: str = "") -> str:
     return out.strip()
 
 
+_SCENE_REF_RE = re.compile(
+    r"\b(?:in|during|from|since|after|before|of)\s+(?:the\s+)?"
+    r"(scene|chapter)\s+(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\b",
+    re.IGNORECASE)
+
+
+def find_scene_reference(text: str) -> str:
+    """A reference to the story's own scene numbering inside the prose.
+
+    The writer occasionally writes things like "taken during Scene 2", which
+    belongs to the plan, never to the story.
+    """
+    match = _SCENE_REF_RE.search(text)
+    return match.group(0) if match else ""
+
+
 _PLACEHOLDER_WORDS = (
     "some", "insert", "todo", "tbd", "placeholder", "xxx", "here", "etc",
     "your ", "name of", "letters", "description", "fill in", "add ",
@@ -629,6 +645,14 @@ def generate_scene(
     text = _run_with_thinking_retry(cfg, "scene", system, user,
                                     cancel, on_chunk).strip()
     text = strip_scene_artifacts(text, project.scenes[index].title)
+
+    scene_ref = find_scene_reference(text)
+    if scene_ref:
+        msg = (f"⚠ Scene {index + 1} refers to the story's own plan in the "
+               f"prose (“{scene_ref}”) — regenerate it, or delete that phrase.")
+        applog.log("scene", msg)
+        if NOTIFY is not None:
+            NOTIFY(msg)
 
     stub = find_placeholder_stub(text)
     if stub:

@@ -376,6 +376,19 @@ def test_outline_block():
     print("outline block formatting OK")
 
 
+def test_scene_reference_detection():
+    f = pipeline.find_scene_reference
+    # the plan leaking into the prose
+    assert f("a printout taken during Scene 2: a photograph") == "during Scene 2"
+    assert f("the machine of scene two and the collaborator") == "of scene two"
+    assert f("As in Chapter 3, she hesitated.") == "in Chapter 3"
+    # ordinary prose that merely uses the words
+    assert f("She surveyed the crime scene carefully.") == ""
+    assert f("The scene was a mess of broken glass.") == ""
+    assert f("He read chapter after chapter of the ledger.") == ""
+    print("scene reference detection OK")
+
+
 def test_placeholder_stub_detection():
     f = pipeline.find_placeholder_stub
     # stubs the model leaves instead of writing something
@@ -570,6 +583,7 @@ if __name__ == "__main__":
     test_cast_extraction()
     test_cast_tracking()
     test_outline_block()
+    test_scene_reference_detection()
     test_placeholder_stub_detection()
     test_repeated_opening_detection()
     test_strip_scene_artifacts()
