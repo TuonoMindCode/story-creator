@@ -478,6 +478,24 @@ def test_placeholder_stub_detection():
     print("placeholder stub detection OK")
 
 
+def test_role_label_and_honorific_detection():
+    label = pipeline.find_role_label
+    assert label("When Interviewer B sighed audibly, she paused.") == "Interviewer B"
+    assert label("Suspect A refused to speak.") == "Suspect A"
+    assert label("Witness 2 gave a statement.") == "Witness 2"
+    # real prose naming real people must survive
+    assert label("The interviewer, Julian Hayes, steepled his fingers.") == ""
+    assert label("Officer Clara Jensen moved around the periphery.") == ""
+
+    clash = pipeline.find_honorific_conflict
+    assert clash("A photograph of Mr. Davies. The smiling face of "
+                 "Ms. Clara Davies.") != ""
+    # a married couple is not a mistake
+    assert clash("Mr. Davies poured the tea while Mrs. Davies read.") == ""
+    assert clash("Ms. Vance met Mr. Thorne in the lobby.") == ""
+    print("role label + honorific conflict detection OK")
+
+
 def test_repeated_opening_detection():
     f = pipeline.find_repeated_opening
     prev = ("She walked to the window and watched the rain. "
@@ -663,6 +681,7 @@ if __name__ == "__main__":
     test_reveal_gating()
     test_scene_reference_detection()
     test_placeholder_stub_detection()
+    test_role_label_and_honorific_detection()
     test_repeated_opening_detection()
     test_strip_scene_artifacts()
     test_log_trim()

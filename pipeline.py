@@ -599,6 +599,38 @@ _PLACEHOLDER_WORDS = (
 _BRACKET_RE = re.compile(r"\[([^\[\]\n]{1,60})\]")
 
 
+_ROLE_LABEL_RE = re.compile(
+    r"\b(Interviewer|Suspect|Witness|Character|Person|Victim|Manager|Client|"
+    r"Candidate|Employee|Officer|Guard|Speaker)\s+([A-Z]|\d+)\b")
+
+
+def find_role_label(text: str) -> str:
+    """A planning label used as if it were a character's name.
+
+    The plan may call someone 'Interviewer B'; the prose must not.
+    """
+    match = _ROLE_LABEL_RE.search(text)
+    return match.group(0) if match else ""
+
+
+_HONORIFIC_RE = re.compile(
+    r"\b(Mr|Ms|Miss)\.?\s+(?:[A-Z][a-z]+\s+){0,2}([A-Z][a-z]{2,})\b")
+
+
+def find_honorific_conflict(text: str) -> str:
+    """One surname addressed as both Mr and Ms — a character who changed sex.
+
+    'Mrs' is ignored, since Mr and Mrs of one surname are usually a couple.
+    """
+    seen: dict = {}
+    for honorific, surname in _HONORIFIC_RE.findall(text):
+        gender = "male" if honorific == "Mr" else "female"
+        previous = seen.setdefault(surname, gender)
+        if previous != gender:
+            return f"Mr. {surname} / {honorific}. {surname}"
+    return ""
+
+
 def find_placeholder_stub(text: str) -> str:
     """A bracketed stub the model left instead of writing something.
 
@@ -672,6 +704,22 @@ def generate_scene(
     if stub:
         msg = (f"⚠ Scene {index + 1} contains an unwritten placeholder "
                f"{stub} — regenerate the scene, or edit it by hand.")
+        applog.log("scene", msg)
+        if NOTIFY is not None:
+            NOTIFY(msg)
+
+    label = find_role_label(text)
+    if label:
+        msg = (f"⚠ Scene {index + 1} uses the planning label “{label}” as a "
+               "name — give that character a real name and regenerate.")
+        applog.log("scene", msg)
+        if NOTIFY is not None:
+            NOTIFY(msg)
+
+    clash = find_honorific_conflict(text)
+    if clash:
+        msg = (f"⚠ Scene {index + 1} calls one character both Mr and Ms "
+               f"({clash}) — the character changed sex mid-scene.")
         applog.log("scene", msg)
         if NOTIFY is not None:
             NOTIFY(msg)
