@@ -643,7 +643,8 @@ _HONORIFIC_RE = re.compile(
 
 
 def find_honorific_conflict(text: str) -> str:
-    """One surname addressed as both Mr and Ms — a character who changed sex.
+    """One surname addressed as both Mr and Ms — a character whose gender
+    changed partway through.
 
     'Mrs' is ignored, since Mr and Mrs of one surname are usually a couple.
     """
@@ -887,7 +888,7 @@ def check_scene(project: StoryProject, index: int, text: str) -> list:
     clash = find_honorific_conflict(text)
     if clash:
         warn(f"calls one character both Mr and Ms ({clash}) — the character "
-             "changed sex mid-scene.")
+             "changed gender mid-scene.")
 
     aside = find_author_aside(text)
     if aside:
