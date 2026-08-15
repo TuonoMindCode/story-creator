@@ -135,7 +135,7 @@ _DEFAULT = {
             "story unless this is the final scene.\n"
             "- End the scene at a natural stopping point.\n"
             "- Output only story prose — no headings, no scene numbers, no notes.\n"
-            "- Names, roles, employers and gender of every character are fixed "
+            "- Names, roles, employers and pronouns of every character are fixed "
             "by the story board and the earlier scenes. Never rename someone, "
             "never invent a second name for a character who already has one, "
             "and never use placeholder names. If a character is not named in "

@@ -384,7 +384,7 @@ def build_scene_prompts(
         prev_tail = ""
 
     lorebook = match_lorebook(lorebook_entries, scene.outline_block(scene_number), prev_tail)
-    # keep names/roles/genders fixed: the story board's cast plus everyone met
+    # keep names/roles/pronouns fixed: the story board's cast plus everyone met
     # in the scenes written so far (tracked automatically), then the lorebook
     people: dict = {}
     for name, desc in extract_characters(project.storyboard_text):
@@ -407,7 +407,7 @@ def build_scene_prompts(
         lines.append(f"- {who}{seen}: {d}")
     blocks = []
     if lines:
-        blocks.append("The cast so far (these names, roles and genders are "
+        blocks.append("The cast so far (these names, roles and pronouns are "
                       "fixed — never rename or re-invent them):\n"
                       + "\n".join(lines))
     if upcoming:
@@ -643,16 +643,16 @@ _HONORIFIC_RE = re.compile(
 
 
 def find_honorific_conflict(text: str) -> str:
-    """One surname addressed as both Mr and Ms — a character whose gender
-    changed partway through.
+    """One surname addressed as both Mr and Ms — the same person switched
+    pronouns partway through.
 
     'Mrs' is ignored, since Mr and Mrs of one surname are usually a couple.
     """
     seen: dict = {}
     for honorific, surname in _HONORIFIC_RE.findall(text):
-        gender = "male" if honorific == "Mr" else "female"
-        previous = seen.setdefault(surname, gender)
-        if previous != gender:
+        form = "Mr" if honorific == "Mr" else "Ms"
+        previous = seen.setdefault(surname, form)
+        if previous != form:
             return f"Mr. {surname} / {honorific}. {surname}"
     return ""
 
@@ -887,8 +887,8 @@ def check_scene(project: StoryProject, index: int, text: str) -> list:
 
     clash = find_honorific_conflict(text)
     if clash:
-        warn(f"calls one character both Mr and Ms ({clash}) — the character "
-             "changed gender mid-scene.")
+        warn(f"calls one character both Mr and Ms ({clash}) — the same person "
+             "switched pronouns mid-scene.")
 
     aside = find_author_aside(text)
     if aside:
@@ -957,7 +957,7 @@ def generate_cast_update(
     """Characters appearing in a finished scene, as {name: short description}.
 
     Merged into the story's cast so later scenes keep names, roles and
-    genders straight. Returns only NEW or newly-detailed entries.
+    pronouns straight. Returns only NEW or newly-detailed entries.
     """
     system = (
         "You extract character records from a scene of a story. You list only "

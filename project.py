@@ -356,9 +356,9 @@ class StoryProject:
     created: float = field(default_factory=time.time)
     gen_info: dict = field(default_factory=dict)  # params/models used per section
     # characters met so far: name -> {"desc": str, "scenes": [1, 3, …]}.
-    # Grows as scenes are written so later scenes keep names, roles and genders
-    # straight. Lives on the story, not the storyboard, so it never pollutes
-    # other stories.
+    # Grows as scenes are written so later scenes keep names, roles and
+    # pronouns straight. Lives on the story, not the storyboard, so it never
+    # pollutes other stories.
     cast: dict = field(default_factory=dict)
 
     # -- tracked cast helpers ------------------------------------------------

@@ -321,7 +321,7 @@ Beginning: she is fired.
     story = StoryProject(name="c", storyboard_text=board,
                          scenes=[Scene(title="One", beat="b")])
     system, _ = pipeline.build_scene_prompts(SectionConfig(), story, 0, [])
-    assert "these names, roles and genders are fixed" in system
+    assert "these names, roles and pronouns are fixed" in system
     assert "Alistair Finch" in system
     print("cast extraction OK")
 
@@ -393,7 +393,7 @@ def test_pronoun_tracking():
     pipeline.merge_cast(story, {
         "Clara Davies": {"desc": "the friend", "pronouns": "she/her"}}, 1)
     assert story.cast_pronouns("Clara Davies") == "she/her"
-    # a later scene must not flip an established gender
+    # a later scene must not flip an established pronoun set
     pipeline.merge_cast(story, {
         "Clara Davies": {"desc": "the friend", "pronouns": "he/him"}}, 2)
     assert story.cast_pronouns("Clara Davies") == "she/her"

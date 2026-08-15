@@ -283,7 +283,7 @@ class StartTab(QWidget):
 
         self.track_cast_check = QCheckBox(
             "Track characters automatically (after each scene, note who "
-            "appeared so later scenes keep names, roles and genders straight)")
+            "appeared so later scenes keep names, roles and pronouns straight)")
         self.track_cast_check.setToolTip(
             "Costs one small extra call per scene, made with the Summarizer "
             "model. The story board's cast is always included; this adds "

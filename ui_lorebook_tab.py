@@ -61,7 +61,7 @@ class LorebookTab(QWidget):
         self.cast_list.setToolTip(
             "Filled in after each scene when 'Track characters automatically' is "
             "on (Story Start tab). These are sent to every later scene so names, "
-            "roles and genders stay fixed. They live with this story only.")
+            "roles and pronouns stay fixed. They live with this story only.")
         self.cast_list.currentRowChanged.connect(self._cast_selected)
         ll.addWidget(self.cast_list, 1)
         cast_row = QHBoxLayout()
@@ -98,9 +98,11 @@ class LorebookTab(QWidget):
         self.pronouns_box = QComboBox()
         self.pronouns_box.setEditable(True)
         self.pronouns_box.addItems(list(prj.PRONOUN_CHOICES))
+        self.pronouns_box.lineEdit().setPlaceholderText("not established yet")
         self.pronouns_box.setToolTip(
-            "Sent with this character to every scene so their gender cannot "
-            "drift. Leave blank for places, objects or world facts.")
+            "Sent with this character to every scene so they stay she/her or "
+            "he/him all the way through. Leave blank for places, objects or "
+            "world facts.")
         self.pronouns_box.editTextChanged.connect(self._field_changed)
         form.addRow("Name", self.name_edit)
         form.addRow("Pronouns", self.pronouns_box)
@@ -129,9 +131,11 @@ class LorebookTab(QWidget):
         self.cast_pronouns_box = QComboBox()
         self.cast_pronouns_box.setEditable(True)
         self.cast_pronouns_box.addItems(list(prj.PRONOUN_CHOICES))
+        self.cast_pronouns_box.lineEdit().setPlaceholderText(
+            "not established yet")
         self.cast_pronouns_box.setToolTip(
-            "Sent to every later scene so this character's gender cannot "
-            "drift. Detected from the first scene they appear in.")
+            "Sent to every later scene so this character keeps the same "
+            "pronouns throughout. Detected from the first scene they appear in.")
         self.cast_pronouns_box.editTextChanged.connect(self._cast_pronouns_edited)
         cf.addRow("Character", self.cast_name_label)
         cf.addRow("Pronouns", self.cast_pronouns_box)
@@ -140,7 +144,7 @@ class LorebookTab(QWidget):
         cf.addRow("Facts", self.cast_desc_edit)
         cast_info = QLabel(
             "Noted automatically after each scene and sent to every later "
-            "scene so names, roles and genders stay fixed. Edits here are "
+            "scene so names, roles and pronouns stay fixed. Edits here are "
             "saved with the story; Copy to Lorebook makes it permanent for "
             "every story from this storyboard."
         )
