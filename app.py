@@ -33,7 +33,7 @@ from backends import (
 from project import SETTINGS_FILE, StoryProject
 from theme import apply_theme, dark_palette
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 
 class Worker(QThread):
@@ -191,6 +191,7 @@ class MainWindow(QMainWindow):
         from ui_prompts_tab import PromptsTab
         from ui_log_tab import LogTab
         from ui_queue_tab import QueueTab
+        from ui_single_tab import SingleOutputTab
 
         self.tabs = QTabWidget()
         self.tab_start = StartTab(self)
@@ -199,6 +200,7 @@ class MainWindow(QMainWindow):
         self.tab_outline = OutlineTab(self)
         self.tab_writer = WriterTab(self)
         self.tab_lorebook = LorebookTab(self)
+        self.tab_single = SingleOutputTab(self)
         self.tab_complete = CompleteTab(self)
         self.tab_settings = SettingsTab(self)
         self.tab_prompts = PromptsTab(self)
@@ -211,6 +213,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self.tab_outline, "Scene Outline")
         self.tabs.addTab(self.tab_writer, "Scene Writer")
         self.tabs.addTab(self.tab_lorebook, "Lorebook")
+        self.tabs.addTab(self.tab_single, "Single Output")
         self.tabs.addTab(self.tab_complete, "Complete Story")
         self.tabs.addTab(self.tab_queue, "Queue")
         self.tabs.addTab(self.tab_settings, "LLM Settings")

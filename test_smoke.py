@@ -2,6 +2,7 @@
 
 Run with:  python test_smoke.py
 """
+import json
 import os
 import sys
 
@@ -10,6 +11,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtWidgets import QApplication
 
 import pipeline
+import project as prj
 import prompts
 from project import LorebookEntry, Scene, StoryProject
 
@@ -300,20 +302,20 @@ def test_full_context_mode():
 def test_cast_extraction():
     from project import extract_characters
     board = """# Title
-The Unbreakable Schedule
+The Body in the Library
 
 # Main Characters
-**Clara Vance** — Senior Administrative Secretary, mid-40s, precise.
-**Alistair Finch** — CEO of OmniCorp, cold and clipped.
-- **Brenda Hayes**: Recruiter, kinetic and impatient.
+**Inspector Hale** — Detective Inspector, mid-40s, precise.
+**Lady Blackwood** — Chief Medical Examiner, cold and clipped.
+- **Miss Ravel**: Crime reporter, kinetic and impatient.
 
 # Plot Summary
-Beginning: she is fired.
+Beginning: a body is found in the library.
 """
     cast = extract_characters(board)
     names = [n for n, _ in cast]
-    assert names == ["Clara Vance", "Alistair Finch", "Brenda Hayes"], names
-    assert "Senior Administrative Secretary" in cast[0][1]
+    assert names == ["Inspector Hale", "Lady Blackwood", "Miss Ravel"], names
+    assert "Detective Inspector" in cast[0][1]
     assert extract_characters("# Title\nNo cast here\n") == []
 
     # the cast fills the lorebook slot when no lorebook entries exist
@@ -322,7 +324,7 @@ Beginning: she is fired.
                          scenes=[Scene(title="One", beat="b")])
     system, _ = pipeline.build_scene_prompts(SectionConfig(), story, 0, [])
     assert "these names, roles and pronouns are fixed" in system
-    assert "Alistair Finch" in system
+    assert "Lady Blackwood" in system
     print("cast extraction OK")
 
 
@@ -330,28 +332,28 @@ def test_cast_tracking():
     from backends import SectionConfig
     story = StoryProject(
         name="ct",
-        storyboard_text="# Title\nT\n\n# Main Characters\n**Clara Thorne** — secretary.\n",
+        storyboard_text="# Title\nT\n\n# Main Characters\n**Lady Blackwood** — the widow.\n",
         scenes=[Scene(title="One", beat="b1", text="prose"),
                 Scene(title="Two", beat="b2")])
-    added = pipeline.merge_cast(story, {"Liam Reyes": "hiring manager at Zenith, male",
-                                        "Clara Thorne": "should not overwrite"},
+    added = pipeline.merge_cast(story, {"Constable Doyle": "desk sergeant at the Yard, male",
+                                        "Lady Blackwood": "should not overwrite"},
                                 scene_number=1)
-    assert added == 2 and story.cast_desc("Liam Reyes").startswith("hiring manager")
-    assert story.cast_first_scene("Liam Reyes") == 1
+    assert added == 2 and story.cast_desc("Constable Doyle").startswith("desk sergeant")
+    assert story.cast_first_scene("Constable Doyle") == 1
     # seen again in a later scene: not new, but the appearance is recorded
-    assert pipeline.merge_cast(story, {"Liam Reyes": "different text"}, 2) == 0
-    assert story.cast_scenes("Liam Reyes") == [1, 2]
-    assert story.cast_first_scene("Liam Reyes") == 1, "first scene must not move"
+    assert pipeline.merge_cast(story, {"Constable Doyle": "different text"}, 2) == 0
+    assert story.cast_scenes("Constable Doyle") == [1, 2]
+    assert story.cast_first_scene("Constable Doyle") == 1, "first scene must not move"
     # tracked cast reaches the scene prompt with its first-appearance note
     system, _ = pipeline.build_scene_prompts(SectionConfig(), story, 1, [])
-    assert "Liam Reyes" in system and "Clara Thorne" in system
+    assert "Constable Doyle" in system and "Lady Blackwood" in system
     assert "since scene 1" in system
     assert "never rename or re-invent them" in system
     # cast survives a save/load round trip
     path = story.save()
     reloaded = StoryProject.load(path)
-    assert reloaded.cast_desc("Liam Reyes").startswith("hiring manager")
-    assert reloaded.cast_scenes("Liam Reyes") == [1, 2]
+    assert reloaded.cast_desc("Constable Doyle").startswith("desk sergeant")
+    assert reloaded.cast_scenes("Constable Doyle") == [1, 2]
     path.unlink()
     # an identity reveal must not create a second cast member
     reveal = StoryProject(name="reveal")
@@ -385,26 +387,26 @@ def test_pronoun_tracking():
     assert pipeline._split_pronouns("Elara Petrova (she/her)") == \
         ("Elara Petrova", "she/her")
     assert pipeline._split_pronouns("Dr. Moreau (he/him)") == ("Dr. Moreau", "he/him")
-    assert pipeline._split_pronouns("Clara Davies") == ("Clara Davies", "")
+    assert pipeline._split_pronouns("Miss Ravel") == ("Miss Ravel", "")
 
     story = StoryProject(name="p", storyboard_text="# Title\nT\n",
                          scenes=[Scene(title="One", beat="b", text="x"),
                                  Scene(title="Two", beat="b2")])
     pipeline.merge_cast(story, {
-        "Clara Davies": {"desc": "the friend", "pronouns": "she/her"}}, 1)
-    assert story.cast_pronouns("Clara Davies") == "she/her"
+        "Miss Ravel": {"desc": "the reporter", "pronouns":"she/her"}}, 1)
+    assert story.cast_pronouns("Miss Ravel") == "she/her"
     # a later scene must not flip an established pronoun set
     pipeline.merge_cast(story, {
-        "Clara Davies": {"desc": "the friend", "pronouns": "he/him"}}, 2)
-    assert story.cast_pronouns("Clara Davies") == "she/her"
+        "Miss Ravel": {"desc": "the reporter", "pronouns":"he/him"}}, 2)
+    assert story.cast_pronouns("Miss Ravel") == "she/her"
     # …and they reach the scene prompt
     system, _ = pipeline.build_scene_prompts(SectionConfig(), story, 1, [])
-    assert "Clara Davies (she/her)" in system, system
+    assert "Miss Ravel (she/her)" in system, system
 
     # lorebook entries carry pronouns too, and survive save/load
-    entry = LorebookEntry(name="Silas Thorne", content="the boss",
+    entry = LorebookEntry(name="Inspector Hale", content="the detective",
                           pronouns="he/him", always_include=True)
-    assert entry.as_fact_line() == "- Silas Thorne (he/him): the boss"
+    assert entry.as_fact_line() == "- Inspector Hale (he/him): the detective"
     assert LorebookEntry.from_dict(entry.to_dict()).pronouns == "he/him"
     # entries written before this field still load
     assert LorebookEntry.from_dict({"name": "Old", "content": "c"}).pronouns == ""
@@ -412,10 +414,10 @@ def test_pronoun_tracking():
 
 
 def test_outline_block():
-    s = Scene(title="The Deficit Report", beat="She counts what is left.")
+    s = Scene(title="The Locked Door", beat="She finds the key on the wrong side.")
     block = s.outline_block(3)
-    assert "SCENE 3: The Deficit Report" in block
-    assert "WHAT HAPPENS: She counts what is left." in block
+    assert "SCENE 3: The Locked Door" in block
+    assert "WHAT HAPPENS: She finds the key on the wrong side." in block
     assert "CHARACTERS" not in block, "empty fields must be omitted"
     assert "PURPOSE" not in block, "empty fields must be omitted"
     # a field that already carries its label must not be doubled
@@ -444,13 +446,13 @@ def test_confusable_name_detection():
     assert find_confusable_names(sisters) == []
     # ordinary distinct casts stay quiet
     plain = ("# Main Characters\n"
-             "**Maya Thorne** — detective.\n"
+             "**Inspector Hale** — detective.\n"
              "**Karin Volsky** — the victim.\n")
     assert find_confusable_names(plain) == []
     # the real case: the victim's name only appears once the story reveals it,
     # so the clash shows up in the tracked cast rather than the storyboard
     from project import confusable_name_pairs
-    tracked = ["Vera Holstrom", "Marcus Thorne", "Anya Petrov", "Elara Petrova"]
+    tracked = ["Vera Holstrom", "Inspector Hale", "Anya Petrov", "Elara Petrova"]
     flagged = {tuple(sorted(p)) for p in confusable_name_pairs(tracked)}
     assert ("Anya Petrov", "Elara Petrova") in flagged, flagged
     assert len(flagged) == 1, flagged
@@ -518,30 +520,30 @@ def test_role_label_and_honorific_detection():
     assert label("Suspect A refused to speak.") == "Suspect A"
     assert label("Witness 2 gave a statement.") == "Witness 2"
     # real prose naming real people must survive
-    assert label("The interviewer, Julian Hayes, steepled his fingers.") == ""
-    assert label("Officer Clara Jensen moved around the periphery.") == ""
+    assert label("The interviewer, Inspector Hale, steepled his fingers.") == ""
+    assert label("Officer Doyle moved around the periphery.") == ""
 
     clash = pipeline.find_honorific_conflict
-    assert clash("A photograph of Mr. Davies. The smiling face of "
-                 "Ms. Clara Davies.") != ""
+    assert clash("A photograph of Mr. Ravel. The smiling face of "
+                 "Ms. Ada Ravel.") != ""
     # a married couple is not a mistake
-    assert clash("Mr. Davies poured the tea while Mrs. Davies read.") == ""
-    assert clash("Ms. Vance met Mr. Thorne in the lobby.") == ""
+    assert clash("Mr. Ravel poured the tea while Mrs. Ravel read.") == ""
+    assert clash("Ms. Ravel met Mr. Doyle in the lobby.") == ""
     print("role label + honorific conflict detection OK")
 
 
 def test_repeated_opening_detection():
     f = pipeline.find_repeated_opening
     prev = ("She walked to the window and watched the rain. "
-            "I am fully willing to accept the premise that Campaign Gamma "
-            "requires my dedicated focus Tuesday evening.")
+            "I am fully willing to accept the premise that the east wing "
+            "requires my dedicated attention before nightfall.")
     # the new scene opens by re-quoting the previous scene's closing line
-    repeated = ("I am fully willing to accept the premise that Campaign Gamma "
-                "requires my dedicated focus Tuesday evening, she repeated.")
+    repeated = ("I am fully willing to accept the premise that the east wing "
+                "requires my dedicated attention before nightfall, she repeated.")
     hit = f(repeated, prev)
-    assert "Campaign Gamma" in hit and len(hit) >= 60, hit
+    assert "east wing" in hit and len(hit) >= 60, hit
     # a genuine continuation that only refers back is not flagged
-    fresh = ("The morning after the interview, she took the long way to the "
+    fresh = ("The morning after the inquest, she took the long way to the "
              "station and thought about what she had conceded.")
     assert f(fresh, prev) == ""
     # short coincidental overlaps are ignored
@@ -551,7 +553,8 @@ def test_repeated_opening_detection():
 
 def test_author_aside_detection():
     f = pipeline.find_author_aside
-    hit = f("The hiring manager, David Hayes (no relation to Clara's husband), "
+    # the writer patching over two characters who share a name, in brackets
+    hit = f("The coroner, Dr. Petrov (no relation to Inspector Petrova), "
             "waits across the table.")
     assert "no relation" in hit, hit
     assert f("She read the note (twice) before answering.") == ""
@@ -561,37 +564,37 @@ def test_author_aside_detection():
 
 def test_renamed_entity_detection():
     f = pipeline.find_renamed_entity
-    established = ("Clara spent fifteen years at Sterling & Finch. "
-                   "The Sterling & Finch offices were on the tenth floor. "
-                   "Marcus Thorne ran Sterling & Finch like a museum.")
-    drift = "Since Stellar & Finch historically siloed finance, she proposed."
+    established = ("Hale spent fifteen years at Blackwood Manor. "
+                   "The Blackwood Manor library was on the top floor. "
+                   "Lady Blackwood ran Blackwood Manor like a museum.")
+    drift = "Since Blackwater Manor kept no records, she gave up."
     hit = f(drift, established)
-    assert "Stellar & Finch" in hit and "Sterling & Finch" in hit, hit
-    # a genuinely new company is not a misspelling of the old one
-    assert f("She interviewed at Apex Solutions.", established) == ""
+    assert "Blackwater Manor" in hit and "Blackwood Manor" in hit, hit
+    # a genuinely new place is not a misspelling of the old one
+    assert f("She waited at Ravel House.", established) == ""
     # the established name itself is fine
-    assert f("She returned to Sterling & Finch.", established) == ""
+    assert f("She returned to Blackwood Manor.", established) == ""
     # a name used only once is not established enough to compare against
-    assert f("Stellar & Finch called back.",
-             "Clara left Sterling & Finch.") == ""
+    assert f("Blackwater Manor called back.",
+             "Hale left Blackwood Manor.") == ""
     print("renamed-entity detection OK")
 
 
 def test_formulaic_opening_detection():
     f = pipeline.find_formulaic_opening
-    prev = "Clara rises from the imposing chair at Apex Solutions, exhausted."
-    same = "Clara rises slowly from the vinyl stool at The Daily Grind."
-    assert f(same, prev) == "“clara rises…”", f(same, prev)
+    prev = "Hale rises from the imposing chair at Blackwood Manor, exhausted."
+    same = "Hale rises slowly from the vinyl stool at the Bell and Whistle."
+    assert f(same, prev) == "“hale rises…”", f(same, prev)
     fresh = "The low hum of the refrigerator fills the kitchen while she reads."
     assert f(fresh, prev) == ""
     # a shared opening article alone is not a pattern
     assert f("The rain fell.", "The morning came slowly.") == ""
 
     # both scenes open on a sensation carried over from the scene before
-    residue_a = ("The cool, sterile air of Clara Jennings' suite still clings "
-                 "faintly to the charcoal wool of Eleanor's suit jacket.")
-    residue_b = ("The sharp resonance of Brennan's pronouncement still "
-                 "vibrates faintly inside Eleanor Vance's skull.")
+    residue_a = ("The cool, sterile air of the mortuary still clings faintly "
+                 "to the charcoal wool of Hale's overcoat.")
+    residue_b = ("The sharp resonance of Lady Blackwood's answer still "
+                 "vibrates faintly inside Hale's skull.")
     assert f(residue_b, residue_a) == "on the lingering residue of the scene before"
     # one such opening is a transition, not a tic
     assert f(residue_b, fresh) == ""
@@ -621,25 +624,274 @@ def test_upcoming_cast_withheld():
     story = StoryProject(name="upcoming")
     story.storyboard_text = (
         "# Main Characters\n"
-        "- Clara Vance: the secretary\n"
-        "- Brenda Holloway: the hiring manager at Apex\n"
+        "- Inspector Hale: the detective\n"
+        "- Dr. Petrov: the coroner at the county morgue\n"
     )
     story.scenes = [
-        Scene(title="Termination", beat="Clara clears her desk alone."),
-        Scene(title="Interview", beat="Brenda Holloway interviews Clara."),
+        Scene(title="The Call", beat="Hale walks the crime scene alone."),
+        Scene(title="The Autopsy", beat="Dr. Petrov briefs Hale."),
     ]
     system, user = pipeline.build_scene_prompts(cfg, story, 0, [])
     both = system + user
-    assert "Clara Vance" in both
-    # she belongs to scene 2 — scene 1 may not put her in the office
+    assert "Inspector Hale" in both
+    # the coroner belongs to scene 2 — scene 1 may not put her at the scene
     assert "Not in the story yet" in both, both
-    assert "Brenda Holloway (scene 2)" in both, both
-    assert "the hiring manager at Apex" not in both, both
+    assert "Dr. Petrov (scene 2)" in both, both
+    assert "the coroner at the county morgue" not in both, both
     # by her own scene she is fully described
     system2, user2 = pipeline.build_scene_prompts(cfg, story, 1, [])
-    assert "the hiring manager at Apex" in system2 + user2
+    assert "the coroner at the county morgue" in system2 + user2
     assert "Not in the story yet" not in system2 + user2
     print("upcoming-cast withholding OK")
+
+
+def test_brief_parsing():
+    """Every shape a model has actually returned the prompt pair in."""
+    import briefs
+    f = briefs.parse_brief_response
+
+    # 1: a clean JSON object
+    got = f('{"system_prompt": "You are a noir storyteller.", '
+            '"user_prompt": "Write a 6000 word story."}')
+    assert got["system_prompt"] == "You are a noir storyteller."
+    assert got["user_prompt"] == "Write a 6000 word story."
+
+    # 2: wrapped in a markdown fence
+    got = f('Here you go:\n```json\n{"system_prompt": "S", "user_prompt": "U"}\n```')
+    assert got == {"system_prompt": "S", "user_prompt": "U"}, got
+
+    # 3: buried in surrounding prose
+    got = f('Sure! {"system_prompt": "S2", "user_prompt": "U2"} Hope that helps.')
+    assert got == {"system_prompt": "S2", "user_prompt": "U2"}, got
+
+    # 4: a second JSON object nested inside user_prompt
+    inner = json.dumps({"system_prompt": "REAL", "user_prompt": "ALSO REAL"})
+    got = f(json.dumps({"system_prompt": "", "user_prompt": inner}))
+    assert got == {"system_prompt": "REAL", "user_prompt": "ALSO REAL"}, got
+
+    # 5: the two halves emitted as separate objects
+    got = f('{"system_prompt": "half one"}\n\n{"user_prompt": "half two"}')
+    assert got == {"system_prompt": "half one", "user_prompt": "half two"}, got
+
+    # 6: unparseable as JSON — the raw text is kept so the run is salvageable
+    got = f("I could not follow the format, sorry.")
+    assert got["system_prompt"] == ""
+    assert "could not follow" in got["user_prompt"]
+    print("brief parsing OK (6 response shapes)")
+
+
+def test_brief_instructions():
+    import briefs
+    names = briefs.list_instructions()
+    assert len(names) >= 11, names
+    assert briefs.DEFAULT_INSTRUCTION_NAME in names
+    for name in names:
+        assert briefs.get_instruction(name).strip(), f"{name} has no text"
+    # the genre-aware brief must still demand the things that make it work
+    text = briefs.get_instruction(briefs.DEFAULT_INSTRUCTION_NAME)
+    assert "system_prompt" in text and "user_prompt" in text
+    assert "6 or more scenes" in text, "scene-count rule lost in the port"
+    assert briefs.is_builtin(briefs.DEFAULT_INSTRUCTION_NAME)
+    # an unknown name falls back rather than returning nothing
+    assert briefs.get_instruction("no-such-instruction").strip()
+    print(f"brief instructions OK ({len(names)} available)")
+
+
+def test_brief_library(tmp_dir=None):
+    """Saving, listing, editing and deleting briefs, in a throwaway folder."""
+    import shutil
+    import tempfile
+    import briefs
+    from pathlib import Path
+
+    original = briefs.BRIEFS_DIR
+    briefs.BRIEFS_DIR = Path(tempfile.mkdtemp(prefix="briefs-test-"))
+    try:
+        assert briefs.list_briefs() == []
+        brief = briefs.Brief(concept="a locked room on a night train",
+                             instruction_name="Detective / Mystery",
+                             system_prompt="S", user_prompt="U")
+        path = briefs.save_brief(brief)
+        assert path.exists()
+        assert brief.title == "a locked room on a night train"
+        names = briefs.list_briefs()
+        assert names == [path.name], names
+        loaded = briefs.load_brief(path.name)
+        assert loaded.system_prompt == "S" and loaded.user_prompt == "U"
+        assert loaded.concept == brief.concept
+        assert loaded.is_usable
+        # edits are written back to the same file
+        loaded.user_prompt = "edited"
+        briefs.overwrite_brief(path.name, loaded)
+        assert briefs.load_brief(path.name).user_prompt == "edited"
+        assert len(briefs.list_briefs()) == 1, "editing must not add a file"
+        # a brief with no user prompt cannot write anything
+        assert not briefs.Brief(system_prompt="S").is_usable
+        briefs.delete_brief(path.name)
+        assert briefs.list_briefs() == []
+        assert briefs.load_brief("gone.json") is None
+    finally:
+        shutil.rmtree(briefs.BRIEFS_DIR, ignore_errors=True)
+        briefs.BRIEFS_DIR = original
+    print("brief library OK")
+
+
+def test_prompt_files():
+    """Hand-written system/user prompts kept as plain .txt, in a temp folder."""
+    import shutil
+    import tempfile
+    import briefs
+    from pathlib import Path
+
+    originals = (briefs.SYSTEM_PROMPTS_DIR, briefs.USER_PROMPTS_DIR)
+    briefs.SYSTEM_PROMPTS_DIR = Path(tempfile.mkdtemp(prefix="sysprompt-test-"))
+    briefs.USER_PROMPTS_DIR = Path(tempfile.mkdtemp(prefix="usrprompt-test-"))
+    try:
+        assert briefs.list_prompt_files(briefs.SYSTEM) == []
+        briefs.save_prompt_file(briefs.SYSTEM, "my noir voice",
+                                "You are a noir storyteller.")
+        briefs.save_prompt_file(briefs.USER, "night train",
+                                "Write a 6000 word story.")
+        # the name is slugified, so the dropdown shows a filename-safe stem
+        assert briefs.list_prompt_files(briefs.SYSTEM) == ["my-noir-voice"]
+        assert briefs.list_prompt_files(briefs.USER) == ["night-train"]
+        # the two kinds are separate folders and never bleed into each other
+        assert briefs.list_prompt_files(briefs.USER) != \
+            briefs.list_prompt_files(briefs.SYSTEM)
+        assert briefs.load_prompt_file(briefs.SYSTEM, "my-noir-voice") == \
+            "You are a noir storyteller."
+        assert briefs.load_prompt_file(briefs.USER, "night-train") == \
+            "Write a 6000 word story."
+        # a missing file is empty rather than an error, so a stale pick is safe
+        assert briefs.load_prompt_file(briefs.SYSTEM, "deleted") == ""
+        briefs.delete_prompt_file(briefs.SYSTEM, "my-noir-voice")
+        assert briefs.list_prompt_files(briefs.SYSTEM) == []
+    finally:
+        for d in (briefs.SYSTEM_PROMPTS_DIR, briefs.USER_PROMPTS_DIR):
+            shutil.rmtree(d, ignore_errors=True)
+        briefs.SYSTEM_PROMPTS_DIR, briefs.USER_PROMPTS_DIR = originals
+    print("prompt files OK")
+
+
+def test_single_output_project():
+    """A one-call story exports as continuous prose, with no scene heading."""
+    story = prj.make_single_output_project(
+        "a detective works a locked-room case",
+        "She read the file twice. The second time changed nothing.")
+    assert story.single_output is True
+    assert len(story.scenes) == 1
+    assert story.scenes[0].status == prj.SCENE_WRITTEN
+    assert story.title == "a detective works a locked-room case"
+
+    text = story.combined_text()
+    assert "Scene 1" not in text, text
+    assert "-----" not in text, text
+    assert "She read the file twice." in text
+    md = story.combined_text(markdown=True)
+    assert "## Scene" not in md, md
+    assert md.startswith("# a detective works a locked-room case")
+
+    # a normal multi-scene story still gets its headings
+    normal = StoryProject(name="n", scenes=[Scene(title="One", text="A."),
+                                            Scene(title="Two", text="B.")])
+    assert "Scene 1: One" in normal.combined_text()
+
+    # the flag survives save/load
+    restored = StoryProject.from_dict(story.to_dict())
+    assert restored.single_output is True
+    assert "Scene 1" not in restored.combined_text()
+    print("single-output project OK")
+
+
+def test_padding_detection():
+    """The three ways a one-call story pads when it runs out of plot."""
+    varied = (
+        "The corridor smelled of rain and cold plaster.\n\n"
+        "She counted the floors as she climbed, and did not hurry.\n\n"
+        '"You came," he said, without turning from the window.\n\n'
+        '"You left the address in my coat. That seemed like an invitation."\n\n'
+        "Rain moved across the glass in long diagonals.\n\n"
+        '"I did not take it for the money," he said at last.\n\n'
+        '"Nobody ever does," she answered, and went out into the wet street.\n'
+    )
+    assert pipeline.find_self_repetition(varied) == ""
+    assert pipeline.find_told_ending(varied) == 0
+
+    # ten words repeated verbatim is never a coincidence
+    line = "he steadied himself with his left hand and pressed down hard. "
+    padded = "Some opening prose to pad the length. " + line + \
+        "Other things happened in between them. " + line
+    hit = pipeline.find_self_repetition(padded)
+    assert "steadied himself" in hit and "(2×)" in hit, hit
+
+    # a phrase re-explained far past the point the reader has it
+    body = ("She checked the service hatch again and thought about it. "
+            "The corridor was quiet. " * 60)
+    saturated = pipeline.find_saturated_phrase(body)
+    assert "service hatch" in saturated, saturated
+    # names are meant to recur, so they must not count as labouring a point
+    names = ("Inspector Hale walked in. Hale sat down. "
+             "Later Hale stood up again and left. " * 60)
+    assert "hale" not in pipeline.find_saturated_phrase(names).lower()
+    # nor is a story's stake, which is a quantity and is supposed to recur:
+    # measured on real stories a re-explained mechanism and a repeated stake
+    # occur at the same rate, so only the quantity test separates them
+    stake = ("He owed twenty thousand and could not say it aloud. "
+             "The morning came in grey over the yard. " * 60)
+    reported = pipeline.find_saturated_phrase(stake)
+    assert "twenty thousand" not in reported,         f"a quantity is the story's stake, not padding: {reported}"
+
+    # a duplicated scene must be reported by its size, not as a short quote
+    scene = ("She set the cup down and looked at him for a long moment "
+             "before she finally said the thing she had come to say. ")
+    twice = "Opening prose that differs. " + scene +         "Something else happens in between the two. " + scene
+    hit = pipeline.find_self_repetition(twice)
+    assert "-word passage" in hit and "written twice" in hit, hit
+
+    # a story with dialogue that stops having any is winding down into summary
+    told = varied + ("\n\nHe filed the report the next morning.\n\n"
+                     "The case was closed without ceremony.\n\n"
+                     "Nobody spoke of it again that winter.\n\n"
+                     "He drove home and did not look back.\n\n"
+                     "It was, in the end, just another file.\n")
+    assert pipeline.find_told_ending(told) >= 4, pipeline.find_told_ending(told)
+    # prose with no dialogue anywhere is a style, not a fade-out
+    narration = "\n\n".join(f"The {w} moved through the empty room slowly."
+                            for w in "rain light dust cold hour season year "
+                                     "silence morning evening".split())
+    assert pipeline.find_told_ending(narration) == 0
+    print("padding detection OK")
+
+
+def test_brief_rules_appended():
+    """Every brief carries the anti-padding rules, built-in or hand-written."""
+    import briefs
+    suffix = briefs.BRIEF_RULES_SUFFIX
+    assert "Never restate a fact" in suffix
+    assert "acted out between characters" in suffix
+    assert "revealed on the page" in suffix
+    # the beats must cover the event the closing scene reacts to: a brief that
+    # asked for a reckoning "after the tournament attempt fails" listed no
+    # tournament, so the story stopped before the fight ever happened
+    assert "the final scene reacts to" in suffix
+    assert "aftermath" in suffix
+    # the JSON-only instruction has to come last or the model narrates instead
+    assert suffix.rstrip().endswith("No other text.")
+    print("brief rules OK")
+
+
+def test_single_story_checks():
+    """The detectors that still apply when there is only one blob of prose."""
+    clean = "She read the letter twice. The second time changed nothing."
+    assert pipeline.check_single_story(clean) == []
+    issues = pipeline.check_single_story(
+        "As shown in Scene 2, [insert name] arrived. "
+        "Mr. Davies nodded; Ms. Davies did not.")
+    assert len(issues) == 3, issues
+    assert all(i.startswith("⚠ This story") for i in issues), issues
+    joined = " ".join(issues)
+    assert "own plan" in joined and "placeholder" in joined and "Mr and Ms" in joined
+    print("single-story checks OK")
 
 
 def test_strip_scene_artifacts():
@@ -697,7 +949,7 @@ def test_ui_builds():
         test_settings.unlink()
     appmod.SETTINGS_FILE = test_settings
     win = appmod.MainWindow()
-    assert win.tabs.count() == 11, f"expected 11 tabs, got {win.tabs.count()}"
+    assert win.tabs.count() == 12, f"expected 12 tabs, got {win.tabs.count()}"
     assert "summarizer" in win.state.sections
     # builder compose includes the writing-style options
     desc = win.tab_builder.compose()
@@ -749,20 +1001,20 @@ def test_ui_builds():
     # the lorebook tab shows the story's automatically tracked cast
     story_lb = StoryProject(name="lb-test", storyboard_text="# Title\nT\n",
                             scenes=[Scene(title="One", beat="b")])
-    story_lb.note_cast("Liam Reyes", "hiring manager, male", 3)
+    story_lb.note_cast("Constable Doyle", "desk sergeant, male", 3)
     win.state.project = story_lb
     win.state.selected_storyboard = ""
     lb = win.tab_lorebook
     lb.refresh_cast()
     assert lb.cast_list.count() == 1
     # the list shows the name (with its first scene), details go on the right
-    assert lb.cast_list.item(0).text() == "Liam Reyes   (scene 3)"
+    assert lb.cast_list.item(0).text() == "Constable Doyle   (scene 3)"
     lb.cast_list.setCurrentRow(0)
     lb._cast_selected(0)
     assert lb.right_stack.currentIndex() == 1, "cast page should be shown"
-    assert lb.cast_name_label.text() == "Liam Reyes"
+    assert lb.cast_name_label.text() == "Constable Doyle"
     assert lb.cast_first_label.text() == "Scene 3"
-    assert "hiring manager" in lb.cast_desc_edit.toPlainText()
+    assert "desk sergeant" in lb.cast_desc_edit.toPlainText()
     # forgetting a wrongly detected character removes it
     lb._forget_cast_entry()
     assert story_lb.cast == {}
@@ -811,7 +1063,7 @@ def test_ui_builds():
     assert win.state.sections["writer"].params.ranges["temperature"] == [0.61, 1.29]
     win.close()
     test_settings.unlink(missing_ok=True)
-    print("UI builds OK (11 tabs), settings persist OK")
+    print("UI builds OK (12 tabs), settings persist OK")
 
 
 if __name__ == "__main__":
@@ -838,6 +1090,14 @@ if __name__ == "__main__":
     test_formulaic_opening_detection()
     test_scene_issue_collection()
     test_upcoming_cast_withheld()
+    test_brief_parsing()
+    test_brief_instructions()
+    test_brief_library()
+    test_prompt_files()
+    test_single_output_project()
+    test_padding_detection()
+    test_brief_rules_appended()
+    test_single_story_checks()
     test_strip_scene_artifacts()
     test_log_trim()
     test_infinite_spin()

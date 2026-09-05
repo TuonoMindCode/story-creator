@@ -1,15 +1,19 @@
 # Story Creator — Local LLM Story Writer
 
-I created this app by using Claude 5, this app took about about 3-4 days with the
-help of Claude, it seems to work without problems.
+I created this app by using Claude 5.
 
-Qwen3.5 thinking model is thinking too mutch on the Summarizer, so sometimes it 
-dos not Summarize a scene, qwen is like thinking over 5000 tokens... 
-fix is to use a none thinking model for the summerizer.
+added "signel output from a description" and "singel output from saved prompts".
+"signel output from a description" if you type like "a drama about a amateur boxer" then it dos 2 llm calls, 
+first call it creates a system prompt and a user prompt and the second llm call uses that system and user prompt
+for a singel output for the hole story, this works on llm models that can generate 
+long singel output, tested on these models, not perfect but it generates the output:
+
+Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf - about 7000-10000 tokens output.
+LongCat-Flash-Lite-uncensored-heretic-Native-MTP-Preserved-Q5_K_M.gguf - about 7000-13000 token output.
 
 The rest of the readme is created by Claude. 
 
-![Story Start tab](story-start03.PNG)
+![Story Start tab](story-start04.PNG)
 
 Cross-platform (Windows/Linux/Mac) PySide6 desktop app that writes long,
 multi-scene stories with **local LLMs**. Because local models typically produce
@@ -17,6 +21,10 @@ multi-scene stories with **local LLMs**. Because local models typically produce
 pipeline, each stage one LLM call:
 
 **concept → storyboard → scene outline → scene-by-scene prose (streamed live)**
+
+If your model can sustain a long single response, **single-output mode** skips
+that pipeline entirely and writes the whole story in one call instead — see
+the Single Output tab below.
 
 Continuity between scenes is kept with per-scene summaries (or the full text of
 all previous scenes, if you prefer) plus the verbatim ending of the previous
@@ -35,6 +43,10 @@ Summarizer** — can use a different backend and model: small fast models for
 planning and summaries, your biggest model for the prose. Thinking models
 (Qwen3 etc.) are handled: their hidden reasoning is shown live but stripped
 from the story text.
+
+In single-output mode the same two sections are reused: **Storyboard** writes
+the brief (a small model is fine) and **Scene Writer** writes the whole story
+in one call, so nothing extra needs configuring.
 
 ## Install & run
 
@@ -77,7 +89,8 @@ not help — pip's PySide6 bundles its own Qt.
 1. **Story Start** — story source: free text (saveable), a saved description
    file (editable in place), or an **existing storyboard file** (skips
    storyboard generation — every run makes a fresh outline + scenes from that
-   finished board) · per-section backend/model choice · sampling
+   finished board), **single output from a description**, or **single output
+   from saved prompts** · per-section backend/model choice · sampling
    parameters as **min–max ranges** rolled randomly once per story (same value
    for all scenes of a story; min = max for fixed) · KoboldCpp extras
    (smoothing factor, TFS, Typical P, Top A) · number of scenes, target words
@@ -100,17 +113,27 @@ not help — pip's PySide6 bundles its own Qt.
 6. **Lorebook** — world & character facts tied to a storyboard, injected into
    the scene prompt when their keywords appear; import characters from the
    storyboard automatically.
-7. **Complete Story** — every saved story (newest first), combined text view,
+7. **Single Output** — write a whole story in one LLM call. Pick a **brief
+   instruction** (11 built in — Detective, Thriller, Romance, Drama, Horror,
+   Fantasy, genre-aware, first/third person … — editable, and you can save
+   your own), type what the story should be about, and **Generate Brief**: a
+   small model returns a **system prompt** (how to write it) and a **user
+   prompt** (what to write), both editable and saved to `briefs/` for reuse.
+   **Write Story** sends that pair to the writing model verbatim. You can also
+   load your own prompts from `system-prompts/` and `user-prompts/` instead of
+   generating a brief, or save the boxes back out as `.txt`. A budget line
+   warns before you start if Max tokens is too small for a whole story.
+8. **Complete Story** — every saved story (newest first), combined text view,
    export .txt/.md, reopen any story as the current one. Finished stories are
    also auto-exported to `output/`.
-8. **Queue** — every "Run Batch" click becomes a queue item with a full
+9. **Queue** — every "Run Batch" click becomes a queue item with a full
    snapshot of the settings at that moment; items run one after another. Shows
    "story 3 of 10" progress. Finish Story Skip Rest / Cancel Item / Remove /
    Clear / Stop All / Resume.
-9. **LLM Settings** — per-server settings (URL, chat template Auto/manual,
+10. **LLM Settings** — per-server settings (URL, chat template Auto/manual,
    context length, timeout with infinite default, Test Connection, reset to
    defaults) plus the dark/light theme switch.
-10. **Prompts** — a plain-language **Quick setup** (Loose & free / Detailed &
+11. **Prompts** — a plain-language **Quick setup** (Loose & free / Detailed &
     faithful / Strict format) sets all four prompts with one click — "Detailed
     & faithful" binds the storyboard to your story description (it must end
     with a checklist proving nothing was dropped), demands rich 6-10-sentence
@@ -118,7 +141,7 @@ not help — pip's PySide6 bundles its own Qt.
     where needed. Below it: per-section preset dropdowns (Default, Strict,
     Qwen-tuned, Gemma-tuned, Detailed-Summary, Faithful-Detailed — mix
     freely) and a full template editor to save your own presets.
-11. **Log** — every LLM call with backend, model, rolled parameters and prompt
+12. **Log** — every LLM call with backend, model, rolled parameters and prompt
     size. Opt-in detail checkboxes (scene summaries, each section's full
     prompts, full responses) for debugging bad stories. Size-capped
     (configurable, oldest half dropped automatically).
@@ -196,6 +219,21 @@ thinking, the call is retried once with a bigger budget automatically; a
 summarizer that still fails falls back to a scene excerpt so batches never
 die on it.
 
+### Single output needs a much bigger budget
+
+A brief asks for 5500-9000 words, which is roughly 7000-12000 tokens in one
+reply. Set **Scene Writer Max tokens to ~8192-12288** and start the server
+with a context large enough to hold that *plus* the prompt
+(`koboldcpp --contextsize 32768`, `llama-server -c 32768`). Storyboard Max
+tokens wants ~4096, since it has to return both prompts.
+
+Two traps worth knowing. The context length in LLM Settings is only used by
+the app's own budgeting — it is never sent to the server, so raising it there
+does nothing if the model was loaded smaller. And `llama-server -n 4096` is a
+hard ceiling on every request no matter what the app asks for; drop the flag
+or set `-n -1`. When a reply stops well short of Max tokens the app says so
+and points at the server rather than the setting.
+
 ## Batch runs
 
 Generate N complete stories unattended, in three reuse modes:
@@ -208,6 +246,11 @@ With "Use existing storyboard" on the Story Start tab, the batch never
 generates a storyboard at all: 10 runs = 10 new stories (fresh outline +
 scenes each) from the storyboard file you picked and edited.
 
+Single-output batches work the same way, with their own choice: **a new brief
+for each story** (every story differs in style as well as wording) or **one
+brief for all of them** (N tellings from the same pair of prompts). Picking a
+saved brief or your own `.txt` prompts always reuses them as they are.
+
 Each story rolls fresh values from your min–max parameter ranges, is autosaved
 to `projects/` (with the exact parameters used stored inside) and exported to
 `output/` with a date-time filename.
@@ -219,6 +262,10 @@ story-descriptions/  saved story descriptions (Builder tab / Story Start)
 storyboards/         reusable storyboards + their lorebooks
 projects/            story projects (outline, scenes, summaries, gen params)
 prompt-presets/      user-saved prompt presets
+briefs/              generated (system prompt, user prompt) pairs, reusable
+brief-instructions/  your own brief instructions (.txt)
+system-prompts/      your own system prompts for single output (.txt)
+user-prompts/        your own user prompts for single output (.txt)
 output/              exported complete stories (.txt / .md)
 settings.json        all app settings
 story-creator.log    the log (size-capped)

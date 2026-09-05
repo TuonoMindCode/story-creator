@@ -8,6 +8,11 @@ storyboards/
 projects/
 prompt-presets/
 output/
+briefs/
+brief-instructions/
+system-prompts/
+user-prompts/
+# note: brief_instructions.json (the shipped built-in instructions) IS tracked
 
 # --- python ---
 __pycache__/

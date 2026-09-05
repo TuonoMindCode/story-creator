@@ -12,6 +12,13 @@ DESCRIPTIONS_DIR = APP_DIR / "story-descriptions"
 STORYBOARDS_DIR = APP_DIR / "storyboards"
 PROJECTS_DIR = APP_DIR / "projects"
 OUTPUT_DIR = APP_DIR / "output"
+# single-output mode: saved (system prompt, user prompt) pairs and the
+# instructions that generate them
+BRIEFS_DIR = APP_DIR / "briefs"
+BRIEF_INSTRUCTIONS_DIR = APP_DIR / "brief-instructions"
+# hand-written prompt pairs kept as plain .txt, pickable instead of a brief
+SYSTEM_PROMPTS_DIR = APP_DIR / "system-prompts"
+USER_PROMPTS_DIR = APP_DIR / "user-prompts"
 SETTINGS_FILE = APP_DIR / "settings.json"
 
 SCENE_OUTLINED = "outlined"
@@ -360,6 +367,11 @@ class StoryProject:
     # pronouns straight. Lives on the story, not the storyboard, so it never
     # pollutes other stories.
     cast: dict = field(default_factory=dict)
+    # written in one call from a brief instead of scene by scene. The brief
+    # tells the model to use no scene numbers or titles, so the export must
+    # not add any either.
+    single_output: bool = False
+    brief_name: str = ""        # the saved brief this story came from
 
     # -- tracked cast helpers ------------------------------------------------
 
@@ -502,10 +514,14 @@ class StoryProject:
         for i, scene in enumerate(self.scenes, 1):
             if not scene.text.strip():
                 continue
-            if markdown:
-                parts.append(f"\n## Scene {i}: {scene.title}\n")
-            else:
-                parts.append(f"\nScene {i}: {scene.title}\n{'-' * 30}\n")
+            # a single-output story is one continuous piece: the brief told the
+            # model to write no scene numbers or titles, so adding one here
+            # would contradict the prose underneath it
+            if not self.single_output:
+                if markdown:
+                    parts.append(f"\n## Scene {i}: {scene.title}\n")
+                else:
+                    parts.append(f"\nScene {i}: {scene.title}\n{'-' * 30}\n")
             parts.append(scene.text.strip() + "\n")
         return "\n".join(parts)
 
@@ -515,6 +531,26 @@ class StoryProject:
         path = unique_path(OUTPUT_DIR, stem, suffix)
         path.write_text(self.combined_text(markdown=markdown), encoding="utf-8")
         return path
+
+
+def make_single_output_project(title: str, text: str = "", brief_name: str = "",
+                               issues: list | None = None) -> "StoryProject":
+    """Wrap a one-call story in a StoryProject.
+
+    Everything downstream — autosave, the Complete Story tab, export — works
+    on projects, so a single-output story becomes a project with exactly one
+    scene rather than a second kind of thing to handle everywhere.
+    """
+    title = title.strip() or "single-output story"
+    scene = Scene(title=title, text=text,
+                  status=SCENE_WRITTEN if text else SCENE_OUTLINED,
+                  issues=list(issues or []))
+    # StoryProject.title reads the storyboard's heading, so put the concept
+    # there — otherwise every export is titled with the filename slug
+    return StoryProject(name=new_project_name(title),
+                        storyboard_text=f"# {title}\n",
+                        scenes=[scene], num_scenes=1,
+                        single_output=True, brief_name=brief_name)
 
 
 def list_projects() -> list[str]:

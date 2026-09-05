@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 import applog
+import briefs
 import pipeline
 import project as prj
 from backends import (
@@ -63,11 +64,25 @@ class BatchSpec:
     cfg_summ: SectionConfig = field(default_factory=SectionConfig)
     preset_board: str = ""
     preset_board_name: str = ""
+    # single-output mode: the whole story comes from one call to a brief
+    single_output: bool = False
+    brief_instruction: str = ""   # instruction name, when writing a new brief
+    brief_name: str = ""          # saved brief title, when reusing one
+    brief_system: str = ""
+    brief_user: str = ""
+    new_brief_each: bool = True
 
     def label_for(self, count: int) -> str:
         concept = (self.concept[:38] + "…") if len(self.concept) > 40 else self.concept
         concept = concept.replace("\n", " ") or self.preset_board_name or "(no concept)"
         writer = self.cfg_write.model or self.cfg_write.backend
+        if self.single_output:
+            what = (f"brief “{self.brief_name}”" if self.brief_name
+                    else f"“{concept}”")
+            how = ("new brief each" if self.new_brief_each and not self.brief_name
+                   else "one brief")
+            return (f"{count} story(ies) — single output ({how}) — "
+                    f"{what} — writer: {writer}")
         return (f"{count} story(ies) — {MODE_LABELS[self.mode]} — "
                 f"“{concept}” — writer: {writer}")
 
@@ -92,6 +107,9 @@ class BatchBridge(QObject):
     summary_chunk = Signal(int, str)
     summary_done = Signal(int)
     story_done = Signal(str)          # project name saved + exported
+    brief_started = Signal()
+    brief_chunk = Signal(str)
+    brief_done = Signal(str)          # saved brief filename
 
 
 class StartTab(QWidget):
@@ -126,10 +144,22 @@ class StartTab(QWidget):
         self.radio_board.setToolTip(
             "Skip storyboard generation: every story in the batch is built "
             "from this finished storyboard (fresh outline + scenes each run).")
+        self.radio_single = QRadioButton("Single output from a description")
+        self.radio_single.setToolTip(
+            "One call per story: a brief is written from your description, "
+            "then the whole story is written in a single response. Needs a "
+            "model that can sustain 3000+ tokens in one go.")
+        self.radio_brief = QRadioButton("Single output from saved prompts")
+        self.radio_brief.setToolTip(
+            "Write from prompts that already exist — a brief you generated "
+            "earlier, or your own system/user prompt .txt files. Either way "
+            "they are sent to the writing model exactly as they are.")
         self.radio_text.setChecked(True)
         radio_row.addWidget(self.radio_text)
         radio_row.addWidget(self.radio_file)
         radio_row.addWidget(self.radio_board)
+        radio_row.addWidget(self.radio_single)
+        radio_row.addWidget(self.radio_brief)
         radio_row.addStretch(1)
         cg.addLayout(radio_row)
 
@@ -210,6 +240,89 @@ class StartTab(QWidget):
         row.addStretch(1)
         bp.addLayout(row)
         cg.addWidget(self.board_panel)
+
+        # single output from a description: concept + which brief instruction
+        self.single_panel = QWidget()
+        sp = QVBoxLayout(self.single_panel)
+        sp.setContentsMargins(0, 0, 0, 0)
+        self.single_concept = QPlainTextEdit()
+        self.single_concept.setPlaceholderText(
+            'What should the story be about? e.g. "a detective works a '
+            'locked-room murder in a snowbound hotel"')
+        self.single_concept.setFixedHeight(90)
+        sp.addWidget(self.single_concept)
+        instr_row = QHBoxLayout()
+        instr_row.addWidget(QLabel("Brief instruction:"))
+        self.single_instr = QComboBox()
+        self.single_instr.setToolTip(
+            "How the brief is written — the same list as the Single Output tab.")
+        self.single_instr.currentTextChanged.connect(self._single_instr_changed)
+        instr_row.addWidget(self.single_instr, 1)
+        sp.addLayout(instr_row)
+        self.single_new_each = QCheckBox("New brief for each story")
+        self.single_new_each.setToolTip(
+            "On: every story in the batch gets its own brief, so the stories "
+            "differ in style as well as wording. Off: one brief is written and "
+            "all the stories in the batch are written from it.")
+        self.single_new_each.setChecked(True)
+        sp.addWidget(self.single_new_each)
+        cg.addWidget(self.single_panel)
+
+        # single output from prompts written already: either a saved brief
+        # (one file, both prompts) or a hand-written .txt pair
+        self.brief_panel = QWidget()
+        brp = QVBoxLayout(self.brief_panel)
+        brp.setContentsMargins(0, 0, 0, 0)
+        kind_row = QHBoxLayout()
+        self.use_brief_radio = QRadioButton("Saved brief")
+        self.use_brief_radio.setChecked(True)
+        self.use_files_radio = QRadioButton("Prompt files (.txt)")
+        self.use_files_radio.setToolTip(
+            f"Your own prompts from {prj.SYSTEM_PROMPTS_DIR.name}/ and "
+            f"{prj.USER_PROMPTS_DIR.name}/, mixed and matched freely.")
+        kind_row.addWidget(QLabel("Use:"))
+        kind_row.addWidget(self.use_brief_radio)
+        kind_row.addWidget(self.use_files_radio)
+        kind_row.addStretch(1)
+        brp.addLayout(kind_row)
+
+        brief_row = QHBoxLayout()
+        self.brief_box = QComboBox()
+        self.brief_refresh_btn = QPushButton("↻")
+        self.brief_refresh_btn.setFixedWidth(28)
+        self.brief_refresh_btn.clicked.connect(self.refresh_briefs)
+        brief_row.addWidget(self.brief_box, 1)
+        brief_row.addWidget(self.brief_refresh_btn)
+        self.brief_row_widget = QWidget()
+        self.brief_row_widget.setLayout(brief_row)
+        brp.addWidget(self.brief_row_widget)
+
+        files_row = QHBoxLayout()
+        files_row.setContentsMargins(0, 0, 0, 0)
+        self.sys_prompt_box = QComboBox()
+        self.user_prompt_box = QComboBox()
+        self.sys_prompt_box.currentTextChanged.connect(self._prompt_files_selected)
+        self.user_prompt_box.currentTextChanged.connect(self._prompt_files_selected)
+        self.prompt_files_refresh_btn = QPushButton("↻")
+        self.prompt_files_refresh_btn.setFixedWidth(28)
+        self.prompt_files_refresh_btn.clicked.connect(self.refresh_prompt_files)
+        files_row.addWidget(QLabel("system:"))
+        files_row.addWidget(self.sys_prompt_box, 1)
+        files_row.addWidget(QLabel("user:"))
+        files_row.addWidget(self.user_prompt_box, 1)
+        files_row.addWidget(self.prompt_files_refresh_btn)
+        self.prompt_files_widget = QWidget()
+        self.prompt_files_widget.setLayout(files_row)
+        self.prompt_files_widget.hide()
+        brp.addWidget(self.prompt_files_widget)
+        self.use_brief_radio.toggled.connect(self._brief_kind_changed)
+        self.brief_preview = QPlainTextEdit()
+        self.brief_preview.setReadOnly(True)
+        self.brief_preview.setMinimumHeight(220)
+        self.brief_preview.setPlaceholderText(
+            "The selected brief's two prompts — edit them in the Single Output tab.")
+        brp.addWidget(self.brief_preview)
+        cg.addWidget(self.brief_panel)
         lay.addWidget(concept_group)
 
         self._preview_loading = False
@@ -220,11 +333,17 @@ class StartTab(QWidget):
         self._board_name = ""    # storyboard currently shown in its editor
         self.file_box.currentTextChanged.connect(self._preview_file)
         self.board_box.currentTextChanged.connect(self._board_selected)
+        self.brief_box.currentTextChanged.connect(self._brief_selected)
         self.radio_file.toggled.connect(self._concept_mode_changed)
         self.radio_board.toggled.connect(self._concept_mode_changed)
+        self.radio_single.toggled.connect(self._concept_mode_changed)
+        self.radio_brief.toggled.connect(self._concept_mode_changed)
         self._concept_mode_changed()
         self.refresh_descriptions()
         self.refresh_storyboards()
+        self.refresh_briefs()
+        self.refresh_prompt_files()
+        self.refresh_brief_instructions()
         self.state.descriptions_changed.connect(self.refresh_descriptions)
         self.state.storyboards_changed.connect(self.refresh_storyboards)
 
@@ -428,20 +547,124 @@ class StartTab(QWidget):
 
     # -- concept helpers -------------------------------------------------------
 
+    def is_single_output(self) -> bool:
+        """True when a whole story is written in one call from a brief."""
+        return self.radio_single.isChecked() or self.radio_brief.isChecked()
+
     def _concept_mode_changed(self):
         from_file = self.radio_file.isChecked()
         from_board = self.radio_board.isChecked()
-        free_text = not from_file and not from_board
+        from_desc = self.radio_single.isChecked()
+        from_brief = self.radio_brief.isChecked()
+        single = from_desc or from_brief
+        free_text = not (from_file or from_board or single)
         # show ONLY the panel of the selected source
         self.free_panel.setVisible(free_text)
         self.file_panel.setVisible(from_file)
         self.board_panel.setVisible(from_board)
+        self.single_panel.setVisible(from_desc)
+        self.brief_panel.setVisible(from_brief)
         if hasattr(self, "create_btn"):  # widgets built after this group
-            self.create_btn.setEnabled(not from_board and not self.main.is_busy())
+            self.create_btn.setEnabled(
+                not from_board and not single and not self.main.is_busy())
             # with a finished storyboard, "all new each time" makes no sense
-            self.mode_all_new.setEnabled(not from_board)
+            self.mode_all_new.setEnabled(not from_board and not single)
             if from_board and self.mode_all_new.isChecked():
                 self.mode_same_board.setChecked(True)
+            # a one-call story has no storyboard, no outline and no scenes, so
+            # the reuse modes and the story-shape spinboxes mean nothing here
+            for w in (self.mode_same_board, self.mode_same_outline,
+                      self.scenes_spin, self.length_spin):
+                w.setEnabled(not single)
+
+    def refresh_brief_instructions(self):
+        current = self.state.ui.get("brief_instruction",
+                                    briefs.DEFAULT_INSTRUCTION_NAME)
+        self.single_instr.blockSignals(True)
+        self.single_instr.clear()
+        names = briefs.list_instructions()
+        self.single_instr.addItems(names)
+        if current in names:
+            self.single_instr.setCurrentText(current)
+        self.single_instr.blockSignals(False)
+
+    def _single_instr_changed(self, name: str):
+        if name:
+            self.state.ui["brief_instruction"] = name
+
+    def _brief_kind_changed(self, *_):
+        use_brief = self.use_brief_radio.isChecked()
+        self.brief_row_widget.setVisible(use_brief)
+        self.prompt_files_widget.setVisible(not use_brief)
+        if use_brief:
+            self._brief_selected()
+        else:
+            self.refresh_prompt_files()
+
+    def refresh_prompt_files(self):
+        for box, kind in ((self.sys_prompt_box, briefs.SYSTEM),
+                          (self.user_prompt_box, briefs.USER)):
+            current = box.currentText()
+            box.blockSignals(True)
+            box.clear()
+            box.addItem("")          # blank = none chosen
+            box.addItems(briefs.list_prompt_files(kind))
+            idx = box.findText(current)
+            box.setCurrentIndex(idx if idx >= 0 else 0)
+            box.blockSignals(False)
+        self._prompt_files_selected()
+
+    def selected_prompt_files(self) -> tuple:
+        """(system text, user text) from the two .txt dropdowns."""
+        sys_name = self.sys_prompt_box.currentText()
+        user_name = self.user_prompt_box.currentText()
+        return (briefs.load_prompt_file(briefs.SYSTEM, sys_name) if sys_name else "",
+                briefs.load_prompt_file(briefs.USER, user_name) if user_name else "")
+
+    def _prompt_files_selected(self, *_):
+        system, user = self.selected_prompt_files()
+        if not (system or user):
+            self.brief_preview.setPlainText("")
+            return
+        self.brief_preview.setPlainText(
+            "SYSTEM PROMPT — how to write it:\n"
+            f"{system or '(none chosen — optional)'}\n\n"
+            "USER PROMPT — what to write:\n"
+            f"{user or '(none chosen — required)'}")
+
+    def refresh_briefs(self):
+        current = self.brief_box.currentText()
+        self.brief_box.blockSignals(True)
+        self.brief_box.clear()
+        self._brief_files = briefs.list_briefs()
+        for filename in self._brief_files:
+            brief = briefs.load_brief(filename)
+            self.brief_box.addItem(brief.title if brief and brief.title else filename)
+        self.brief_box.blockSignals(False)
+        if current:
+            idx = self.brief_box.findText(current)
+            if idx >= 0:
+                self.brief_box.setCurrentIndex(idx)
+        self._brief_selected()
+
+    def selected_brief(self):
+        """The Brief object chosen in the dropdown, or None."""
+        row = self.brief_box.currentIndex()
+        files = getattr(self, "_brief_files", [])
+        if not (0 <= row < len(files)):
+            return None
+        return briefs.load_brief(files[row])
+
+    def _brief_selected(self, *_):
+        brief = self.selected_brief()
+        if brief is None:
+            self.brief_preview.setPlainText("")
+            return
+        self.brief_preview.setPlainText(
+            "SYSTEM PROMPT — how to write it:\n"
+            f"{brief.system_prompt}\n\n"
+            "USER PROMPT — what to write:\n"
+            f"{brief.user_prompt}")
 
     def refresh_descriptions(self):
         current = self.file_box.currentText()
@@ -641,7 +864,41 @@ class StartTab(QWidget):
 
         preset_board = ""
         preset_board_name = ""
-        if self.radio_board.isChecked():
+        single = self.is_single_output()
+        brief_instruction = brief_name = brief_system = brief_user = ""
+        new_brief_each = True
+        if single:
+            if self.radio_brief.isChecked():
+                if self.use_files_radio.isChecked():
+                    brief_system, brief_user = self.selected_prompt_files()
+                    if not brief_user.strip():
+                        self.main.statusBar().showMessage(
+                            "Choose a user prompt file — it is the one that "
+                            f"says what to write ({prj.USER_PROMPTS_DIR.name}/).")
+                        return
+                    brief_name = self.user_prompt_box.currentText()
+                    concept = brief_name
+                else:
+                    brief = self.selected_brief()
+                    if brief is None or not brief.is_usable:
+                        self.main.statusBar().showMessage(
+                            "Select a saved brief first — generate one in the "
+                            "Single Output tab.")
+                        return
+                    brief_name = brief.title
+                    brief_system = brief.system_prompt
+                    brief_user = brief.user_prompt
+                    concept = brief.concept
+                new_brief_each = False   # a fixed pair is reused as it is
+            else:
+                concept = self.single_concept.toPlainText().strip()
+                if not concept:
+                    self.main.statusBar().showMessage(
+                        "Describe what the story should be about first.")
+                    return
+                brief_instruction = self.single_instr.currentText()
+                new_brief_each = self.single_new_each.isChecked()
+        elif self.radio_board.isChecked():
             # source = an existing storyboard file: no storyboard generation
             self._flush_board_edits()
             preset_board_name = self.board_box.currentText()
@@ -679,6 +936,12 @@ class StartTab(QWidget):
             cfg_summ=self.state.runtime_cfg("summarizer"),
             preset_board=preset_board,
             preset_board_name=preset_board_name,
+            single_output=single,
+            brief_instruction=brief_instruction,
+            brief_name=brief_name,
+            brief_system=brief_system,
+            brief_user=brief_user,
+            new_brief_each=new_brief_each,
         )
         self.state.job_queue.append(spec)
         self.state.save_settings()  # persist the settings used for this click
@@ -725,7 +988,9 @@ class StartTab(QWidget):
         self._start_batch(spec)
 
     def _start_batch(self, spec: BatchSpec):
-        total_steps = spec.count * (spec.num_scenes + 2)
+        # single output is two steps per story (brief, then the story itself)
+        per_story = 2 if spec.single_output else spec.num_scenes + 2
+        total_steps = spec.count * per_story
         self.progress.setRange(0, total_steps)
         self.progress.setValue(0)
         self.state.ui["batch_boards"] = []  # previous run's boards move to "older"
@@ -749,6 +1014,16 @@ class StartTab(QWidget):
         bridge.summary_chunk.connect(writer_tab._on_summary_chunk)
         bridge.summary_done.connect(writer_tab._on_summary_done)
         bridge.story_done.connect(self._batch_story_done)
+        single_tab = self.main.tab_single
+        bridge.brief_started.connect(single_tab.begin_external_brief)
+        bridge.brief_chunk.connect(single_tab.stream_brief_piece)
+        bridge.brief_done.connect(single_tab.external_brief_done)
+        if spec.single_output:
+            # the story is one scene, so it streams on the scene signals — send
+            # it to the Single Output tab too, or its Story box stays empty
+            bridge.scene_started.connect(single_tab.begin_external_story)
+            bridge.scene_chunk.connect(single_tab.stream_story_piece)
+            bridge.scene_done.connect(single_tab.external_story_done)
         self._batch_bridge = bridge  # keep alive while the job runs
 
         def job(worker):
@@ -763,6 +1038,8 @@ class StartTab(QWidget):
             board_name = spec.preset_board_name
             shared_scenes: list[Scene] | None = None
             finished: list[str] = []
+            brief_system = spec.brief_system
+            brief_user = spec.brief_user
 
             for i in range(spec.count):
                 if worker.cancel.is_set() or worker.soft_stop.is_set():
@@ -774,6 +1051,67 @@ class StartTab(QWidget):
                 cfg_plan = spec.cfg_plan.rolled()
                 cfg_write = spec.cfg_write.rolled()
                 cfg_summ = spec.cfg_summ.rolled()
+
+                # single output: a brief, then the whole story in one call —
+                # no storyboard, no outline, no per-scene loop
+                if spec.single_output:
+                    if not brief_user or (spec.new_brief_each and i > 0):
+                        worker.progress.emit(f"{label} — writing the brief…")
+                        bridge.brief_started.emit()
+                        pair = pipeline.generate_brief(
+                            cfg_board, spec.concept,
+                            briefs.get_instruction(spec.brief_instruction),
+                            cancel=worker.cancel,
+                            on_chunk=bridge.brief_chunk.emit)
+                        brief_system = pair.get("system_prompt", "")
+                        brief_user = pair.get("user_prompt", "")
+                        if worker.cancel.is_set() or not brief_user.strip():
+                            break
+                        saved = briefs.save_brief(briefs.Brief(
+                            concept=spec.concept,
+                            instruction_name=spec.brief_instruction,
+                            system_prompt=brief_system, user_prompt=brief_user,
+                            gen_info={"backend": cfg_board.backend,
+                                      "model": cfg_board.model}))
+                        bridge.brief_done.emit(saved.name)
+                    tick()
+
+                    story = prj.make_single_output_project(
+                        spec.concept or spec.brief_name, brief_name=spec.brief_name)
+                    story.concept = spec.concept
+                    story.gen_info = {
+                        "language": spec.language,
+                        "brief": {"backend": cfg_board.backend,
+                                  "model": cfg_board.model,
+                                  "instruction": spec.brief_instruction},
+                        "writer": {"backend": cfg_write.backend,
+                                   "model": cfg_write.model,
+                                   "params": cfg_write.params.describe()},
+                    }
+                    applog.log("batch", f"{label} '{story.name}' single output, "
+                               f"writer params: {cfg_write.params.describe()}")
+                    bridge.project_ready.emit(story)
+                    worker.progress.emit(f"{label} — writing the whole story…")
+                    bridge.scene_started.emit(0)
+                    text = pipeline.generate_single_story(
+                        cfg_write, brief_system, brief_user,
+                        language=spec.language, cancel=worker.cancel,
+                        on_chunk=lambda piece: bridge.scene_chunk.emit(0, piece))
+                    story.scenes[0].text = text
+                    story.scenes[0].status = prj.SCENE_WRITTEN
+                    if text.strip():
+                        story.scenes[0].issues = pipeline.check_single_story(text)
+                    bridge.scene_done.emit(0)
+                    tick()
+                    story.save()
+                    if text.strip():
+                        story.export(markdown=False)
+                        story.export(markdown=True)
+                        finished.append(story.name)
+                        bridge.story_done.emit(story.name)
+                    if worker.cancel.is_set() or worker.soft_stop.is_set():
+                        break
+                    continue
 
                 # 1) storyboard
                 if spec.mode == MODE_ALL_NEW or not board_text:

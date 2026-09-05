@@ -12,8 +12,9 @@ from typing import Callable, Optional
 
 import applog
 import backends
+import briefs
 import prompts
-from backends import SectionConfig
+from backends import SectionConfig, strip_think
 from project import (
     LorebookEntry,
     Scene,
@@ -82,9 +83,25 @@ def _run(
         raise
     applog.log(section, f"done ← {len(text)} chars (≈{estimate_tokens(text)}tok)")
     if backends.LAST_FINISH_REASON == "length":
-        warning = (f"⚠ The {section} output was CUT OFF by Max tokens "
-                   f"({cfg.params.max_tokens}) — raise Max tokens for the "
-                   "section that generates it (Story Start tab).")
+        asked = cfg.params.max_tokens
+        got = estimate_tokens(text)
+        prompt_tok = estimate_tokens(system + user)
+        if got < asked * 0.85:
+            # the server stopped well short of what was asked for, so the
+            # limit was its own: the model is loaded with a context window
+            # too small to hold this prompt plus a reply this long
+            warning = (
+                f"⚠ The {section} output was CUT OFF after roughly {got} "
+                f"tokens, though Max tokens is {asked}. The server stopped it, "
+                f"not the app — the model is loaded with a context window too "
+                f"small for this prompt (≈{prompt_tok} tokens) plus a reply "
+                f"that long. Restart your server with a bigger context "
+                f"(koboldcpp --contextsize 32768, llama-server -c 32768), or "
+                f"lower Max tokens to fit.")
+        else:
+            warning = (f"⚠ The {section} output was CUT OFF by Max tokens "
+                       f"({asked}) — raise Max tokens for the section that "
+                       "generates it (Story Start tab).")
         applog.log(section, warning)
         if NOTIFY is not None:
             NOTIFY(warning)
@@ -283,6 +300,116 @@ def match_lorebook(entries: list[LorebookEntry], *scan_texts: str) -> str:
 
 def _wants_language(language: str) -> bool:
     return bool(language) and language.strip().lower() not in ("", "english")
+
+
+def generate_brief(
+    cfg: SectionConfig,
+    concept: str,
+    instruction: str,
+    cancel: Optional[threading.Event] = None,
+    on_chunk: Optional[Callable[[str], None]] = None,
+) -> dict:
+    """Turn a concept into a (system prompt, user prompt) pair for one call.
+
+    The instruction is the whole system prompt: it tells a small model to
+    reply with JSON holding the two prompts that will then write the story.
+    `briefs.BRIEF_RULES_SUFFIX` is appended to whichever instruction is used,
+    so every brief — built-in or hand-written — carries the anti-padding and
+    play-the-ending-out rules.
+    """
+    instruction = instruction.rstrip() + briefs.BRIEF_RULES_SUFFIX
+    raw = _run_with_thinking_retry(cfg, "brief", instruction, concept.strip(),
+                                   cancel, on_chunk)
+    pair = briefs.parse_brief_response(strip_think(raw))
+    if not pair.get("user_prompt", "").strip():
+        msg = ("⚠ The brief came back empty — the model returned nothing "
+               "usable. Try again, or raise the Storyboard section's Max "
+               "tokens.")
+        applog.log("brief", msg)
+        if NOTIFY is not None:
+            NOTIFY(msg)
+    elif not pair.get("system_prompt", "").strip():
+        msg = ("⚠ The brief has no system prompt — the model did not return "
+               "both halves. The story can still be written from the user "
+               "prompt alone, but the writing style guide is missing.")
+        applog.log("brief", msg)
+        if NOTIFY is not None:
+            NOTIFY(msg)
+    return pair
+
+
+def generate_single_story(
+    cfg: SectionConfig,
+    system: str,
+    user: str,
+    language: str = "English",
+    cancel: Optional[threading.Event] = None,
+    on_chunk: Optional[Callable[[str], None]] = None,
+) -> str:
+    """Write a whole story in one call from a brief's two prompts.
+
+    The pair is passed through untouched — no templates, no placeholders. A
+    brief is already the finished instruction, and rewriting it here would
+    defeat the point of being able to save and reuse one.
+    """
+    system = system.strip()
+    if _wants_language(language):
+        system += (
+            f"\n\nIMPORTANT: Write the story in {language}. Only the language "
+            "changes — follow every other instruction above."
+        )
+    text = _run_with_thinking_retry(cfg, "single", system, user.strip(),
+                                    cancel, on_chunk).strip()
+    return strip_scene_artifacts(text)
+
+
+def check_single_story(text: str) -> list:
+    """Continuity problems detectable in a one-call story.
+
+    The scene-to-scene checks do not apply — there is no previous scene to
+    compare against — but everything that looks at the prose itself does.
+    """
+    issues: list = []
+
+    def warn(message: str) -> None:
+        msg = f"⚠ This story {message}"
+        issues.append(msg)
+        applog.log("single", msg)
+        if NOTIFY is not None:
+            NOTIFY(msg)
+
+    scene_ref = find_scene_reference(text)
+    if scene_ref:
+        warn(f"refers to its own plan in the prose (“{scene_ref}”) — delete "
+             "that phrase, or write it again.")
+    stub = find_placeholder_stub(text)
+    if stub:
+        warn(f"contains an unwritten placeholder {stub}.")
+    label = find_role_label(text)
+    if label:
+        warn(f"uses the planning label “{label}” as a name.")
+    clash = find_honorific_conflict(text)
+    if clash:
+        warn(f"calls one character both Mr and Ms ({clash}) — the same "
+             "person switched pronouns partway through.")
+    aside = find_author_aside(text)
+    if aside:
+        warn(f"steps out of the story to explain something to the reader "
+             f"{aside}.")
+
+    # one call with budget left over and no plot left pads by repeating
+    repeat = find_self_repetition(text)
+    if repeat:
+        warn(f"repeats itself word for word — {repeat}")
+    saturated = find_saturated_phrase(text)
+    if saturated:
+        warn(f"leans hard on one wording: {saturated}. Check it is carrying "
+             "the story rather than standing in for it.")
+    trailing = find_told_ending(text)
+    if trailing:
+        warn(f"ends with {trailing} paragraphs of narration and nobody "
+             "speaking — the ending is summarised rather than played out.")
+    return issues
 
 
 def generate_storyboard(
@@ -825,6 +952,139 @@ def find_formulaic_opening(new_text: str, prev_text: str) -> str:
     if _opens_on_residue(new_text) and _opens_on_residue(prev_text):
         return "on the lingering residue of the scene before"
     return ""
+
+
+_WORD_RE = re.compile(r"[A-Za-z0-9']+")
+# words too common to say anything about what a phrase is about
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "if", "of", "to", "in", "on", "at",
+    "for", "from", "by", "with", "as", "is", "was", "were", "be", "been",
+    "am", "are", "it", "its", "he", "she", "they", "them", "his", "her",
+    "their", "him", "i", "me", "my", "you", "your", "we", "us", "our",
+    "this", "that", "these", "those", "there", "here", "not", "no", "so",
+    "up", "out", "down", "off", "over", "then", "than", "when", "while",
+    "had", "has", "have", "did", "do", "does", "would", "could", "should",
+    "will", "can", "just", "like", "what", "who", "how", "all", "any",
+    "one", "two", "into", "about", "back", "been", "because", "before",
+    "after", "said", "says", "say", "him", "s", "t",
+}
+
+
+def find_self_repetition(text: str, run: int = 10) -> str:
+    """The longest passage the story writes more than once, verbatim.
+
+    A model that runs out of plot before it runs out of budget pads by
+    repeating itself; one that loses its place writes a whole scene twice.
+    Ten words matching exactly is never a coincidence, so the search starts
+    there and then grows to find how much was actually duplicated — "repeats
+    a 120-word passage" and "repeats a phrase" call for different fixes.
+    """
+    words = _WORD_RE.findall(text.lower())
+    if len(words) < run * 2:
+        return ""
+    longest, times = "", 0
+    length = run
+    while length <= len(words) // 2:
+        counts: dict = {}
+        for i in range(len(words) - length + 1):
+            phrase = " ".join(words[i:i + length])
+            counts[phrase] = counts.get(phrase, 0) + 1
+        phrase, n = max(counts.items(), key=lambda kv: kv[1], default=("", 0))
+        if n < 2:
+            break
+        longest, times = phrase, n
+        length += 10
+    if not longest:
+        return ""
+    size = len(longest.split())
+    opening = " ".join(longest.split()[:10])
+    if size <= run:
+        return f"a {size}-word phrase, “{opening}…” ({times}×)"
+    return (f"a {size}-word passage {times}× — long enough to be a whole "
+            f"scene written twice: “{opening}…”")
+
+
+def _proper_nouns(text: str) -> set:
+    """Words capitalised somewhere other than the start of a sentence.
+
+    Names and places are supposed to recur, so they must not count as the
+    story labouring a point.
+    """
+    names = set()
+    for sentence in re.split(r"(?<=[.!?\"”])\s+", text):
+        for word in _WORD_RE.findall(sentence)[1:]:
+            if word[:1].isupper():
+                names.add(word.lower())
+    return names
+
+
+# A story's stake is a quantity — twenty thousand dollars, five thousand
+# pounds, three years — and naming it repeatedly is the story working, not
+# failing. Measured on real stories, a re-explained mechanism and a repeated
+# stake recur at the same rate (1 per ~570 words), so frequency alone cannot
+# tell them apart; excluding quantities can.
+_QUANTITY_WORDS = {
+    "hundred", "thousand", "million", "billion", "dollars", "pounds", "euros",
+    "percent", "years", "months", "weeks", "days", "hours", "minutes",
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+    "ten", "eleven", "twelve", "twenty", "thirty", "forty", "fifty", "sixty",
+    "seventy", "eighty", "ninety",
+}
+
+
+def find_saturated_phrase(text: str) -> str:
+    """A wording the story leans on far more often than its length justifies.
+
+    This measures how often a form of words recurs, which is not the same as
+    a fact being re-explained — a story's central stake is *supposed* to keep
+    coming up. So the bar is deliberately high, names and places are excluded
+    (they are meant to repeat), and the warning says what was counted rather
+    than claiming to know why.
+    """
+    words = _WORD_RE.findall(text.lower())
+    total = len(words)
+    if total < 400:
+        return ""
+    names = _proper_nouns(text)
+    counts: dict = {}
+    for a, b in zip(words, words[1:]):
+        if a in _STOPWORDS or b in _STOPWORDS or a in names or b in names:
+            continue
+        if a in _QUANTITY_WORDS or b in _QUANTITY_WORDS or a[0].isdigit():
+            continue
+        if len(a) < 3 or len(b) < 3:
+            continue
+        key = f"{a} {b}"
+        counts[key] = counts.get(key, 0) + 1
+    if not counts:
+        return ""
+    phrase, n = max(counts.items(), key=lambda kv: kv[1])
+    # one use per ~600 words of the same two words, quantities excluded
+    limit = max(8, total // 600)
+    if n < limit:
+        return ""
+    return f"“{phrase}” {n}× in {total} words"
+
+
+def find_told_ending(text: str, min_paragraphs: int = 4) -> int:
+    """How many paragraphs the story ends on with nobody speaking or acting.
+
+    A story that has dialogue throughout and then stops having it is winding
+    down into summary — reporting its own ending instead of playing it out.
+    Returns 0 when the ending is dramatised.
+    """
+    paragraphs = [p for p in re.split(r"\n\s*\n", text.strip()) if p.strip()]
+    if len(paragraphs) < min_paragraphs * 2:
+        return 0
+    has_speech = re.compile(r"[\"“”]")
+    if not any(has_speech.search(p) for p in paragraphs):
+        return 0        # narration throughout: a deliberate choice, not a fade
+    trailing = 0
+    for para in reversed(paragraphs):
+        if has_speech.search(para):
+            break
+        trailing += 1
+    return trailing if trailing >= min_paragraphs else 0
 
 
 def generate_scene(

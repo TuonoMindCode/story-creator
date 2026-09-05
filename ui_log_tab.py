@@ -24,6 +24,8 @@ LOG_DETAIL_OPTIONS = [
     ("prompts_outline", "Scene outline system + user prompt"),
     ("prompts_scene", "Scene writer system + user prompt"),
     ("prompts_summary", "Summarizer system + user prompt"),
+    ("prompts_brief", "Brief instruction sent (single output)"),
+    ("prompts_single", "Single-output system + user prompt"),
     ("full_responses", "Full LLM responses (all sections)"),
 ]
 

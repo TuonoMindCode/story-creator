@@ -14,6 +14,7 @@ from http.server import ThreadingHTTPServer
 
 from PySide6.QtWidgets import QApplication
 
+import pipeline
 import project as prj
 from test_mock_llm import Handler
 
@@ -55,12 +56,17 @@ def main_test():
     # otherwise failed runs leave mock stories in the user's folders.
     baseline_projects = set(prj.list_projects())
 
+    import briefs
+    baseline_briefs = set(briefs.list_briefs())
+
     @atexit.register
     def _cleanup_artifacts():
         for name in set(prj.list_projects()) - baseline_projects:
             (prj.PROJECTS_DIR / f"{name}.json").unlink(missing_ok=True)
         for name in set(prj.list_storyboards()) - before_boards:
             prj.delete_storyboard(name)
+        for name in set(briefs.list_briefs()) - baseline_briefs:
+            briefs.delete_brief(name)
         test_settings.unlink(missing_ok=True)
 
     # --- single storyboard creation must stream into the Storyboard tab ------
@@ -325,6 +331,154 @@ def main_test():
     assert ts.mode_all_new.isEnabled(), "'all new' should re-enable"
     print("existing-storyboard source OK (no board generation, edits flushed)")
 
+    # --- Single Output tab: the two buttons, driven as a user would ----------
+    st = main.tab_single
+    briefs_before_tab = set(briefs.list_briefs())
+    projects_before_tab = set(prj.list_projects())
+    assert st.instr_box.count() >= 11, "built-in instructions missing"
+    st.concept_edit.setPlainText("a locked room on a night train")
+    st.generate_brief()
+    pump(qapp, main, 60)
+    assert "noir storyteller" in st.system_edit.toPlainText(), \
+        st.system_edit.toPlainText()[:100]
+    assert "noir story" in st.user_edit.toPlainText()
+    tab_briefs = set(briefs.list_briefs()) - briefs_before_tab
+    assert len(tab_briefs) == 1, f"Generate Brief should save one brief: {tab_briefs}"
+    assert st.list.count() == len(briefs.list_briefs()), "brief list not refreshed"
+
+    # edits to the prompt boxes are written back to the same file
+    st.user_edit.setPlainText(st.user_edit.toPlainText() + "\nEXTRA DIRECTION.")
+    st._save_edits()
+    assert "EXTRA DIRECTION." in briefs.load_brief(sorted(tab_briefs)[0]).user_prompt
+    assert set(briefs.list_briefs()) - briefs_before_tab == tab_briefs, \
+        "saving edits must not create a second brief"
+
+    st.write_story()
+    pump(qapp, main, 60)
+    assert st.story_edit.toPlainText().startswith("Hale had seen worse"), \
+        st.story_edit.toPlainText()[:80]
+    assert "words" in st.counter.text() and st.counter.text() != "0 words · ≈0 tokens"
+    tab_projects = set(prj.list_projects()) - projects_before_tab
+    assert len(tab_projects) == 1, f"Write Story should save one story: {tab_projects}"
+    assert main.state.project is not None and main.state.project.single_output
+    for name in tab_projects:
+        (prj.PROJECTS_DIR / f"{name}.json").unlink(missing_ok=True)
+    for name in tab_briefs:
+        briefs.delete_brief(name)
+    st.refresh_briefs()
+    print("Single Output tab OK (brief generated + edited + story written)")
+
+    # --- single output: one brief, two stories, one call each ----------------
+    before_single = set(prj.list_projects())
+    briefs_before = set(briefs.list_briefs())
+    ts = main.tab_start
+    ts.radio_single.setChecked(True)
+    ts.single_concept.setPlainText("a detective story on a night train")
+    ts.single_new_each.setChecked(False)      # one brief shared by both stories
+    ts.batch_spin.setValue(2)
+    brief_streamed = []
+    story_streamed = []
+    single_tab_streamed = []
+    ts.run_batch()
+    t0 = time.time()
+    while main.is_busy() and time.time() - t0 < 60:
+        qapp.processEvents()
+        if st.user_edit.toPlainText():
+            brief_streamed.append(len(st.user_edit.toPlainText()))
+        if main.tab_writer.editor.toPlainText():
+            story_streamed.append(len(main.tab_writer.editor.toPlainText()))
+        if st.story_edit.toPlainText():
+            single_tab_streamed.append(len(st.story_edit.toPlainText()))
+        time.sleep(0.005)
+    qapp.processEvents()
+
+    # the story must land in the Single Output tab's own Story box, not only
+    # in the Scene Writer — that box stayed empty during a batch once
+    assert single_tab_streamed, \
+        "the Single Output tab's Story box stayed empty during the batch"
+    assert st.story_edit.toPlainText().strip(), \
+        "the Single Output tab's Story box is empty after the batch"
+
+    single_projects = set(prj.list_projects()) - before_single
+    assert len(single_projects) == 2, f"expected 2 stories, got {single_projects}"
+    new_briefs = set(briefs.list_briefs()) - briefs_before
+    assert len(new_briefs) == 1, \
+        f"'same brief for all stories' should write one brief, got {new_briefs}"
+    assert brief_streamed, "the brief never streamed into the Single Output tab"
+    assert story_streamed, "the story never streamed into the writer"
+
+    # each story is a one-scene project that exports as continuous prose
+    for name in single_projects:
+        story = prj.StoryProject.load(prj.PROJECTS_DIR / f"{name}.json")
+        assert story.single_output, f"{name} is not marked single-output"
+        assert len(story.scenes) == 1, f"{name} has {len(story.scenes)} scenes"
+        assert story.scenes[0].text.strip(), f"{name} has no prose"
+        assert "Scene 1" not in story.combined_text(), \
+            f"{name} exported with a scene heading"
+    # the saved brief round-trips to the same pair that was used
+    brief = briefs.load_brief(sorted(new_briefs)[0])
+    assert brief.is_usable and "noir story" in brief.user_prompt, brief.user_prompt
+    assert brief.concept == "a detective story on a night train"
+
+    # picking that saved brief reuses it instead of writing a new one
+    ts.radio_brief.setChecked(True)
+    ts.refresh_briefs()
+    assert ts.brief_box.count() >= 1
+    idx = ts.brief_box.findText(brief.title)
+    assert idx >= 0, f"saved brief not listed: {brief.title}"
+    ts.brief_box.setCurrentIndex(idx)
+    qapp.processEvents()
+    assert "SYSTEM PROMPT" in ts.brief_preview.toPlainText()
+    ts.batch_spin.setValue(1)
+    before_reuse = set(prj.list_projects())
+    briefs_before_reuse = set(briefs.list_briefs())
+    ts.run_batch()
+    pump(qapp, main, 60)
+    assert len(set(prj.list_projects()) - before_reuse) == 1
+    assert set(briefs.list_briefs()) == briefs_before_reuse, \
+        "reusing a saved brief must not generate another one"
+    # a hand-written .txt pair runs without any brief being generated at all
+    sys_path = briefs.save_prompt_file(
+        briefs.SYSTEM, "test noir voice",
+        "You are a hard-boiled noir storyteller. Write plain prose only.")
+    usr_path = briefs.save_prompt_file(
+        briefs.USER, "test night train", "Write a 6000 word noir story.")
+    try:
+        ts.use_files_radio.setChecked(True)
+        assert ts.brief_row_widget.isHidden(), "brief picker should hide"
+        assert not ts.prompt_files_widget.isHidden(), "file pickers should show"
+        ts.sys_prompt_box.setCurrentText(sys_path.stem)
+        ts.user_prompt_box.setCurrentText(usr_path.stem)
+        qapp.processEvents()
+        assert "hard-boiled noir" in ts.brief_preview.toPlainText()
+        before_files = set(prj.list_projects())
+        briefs_before_files = set(briefs.list_briefs())
+        ts.batch_spin.setValue(1)
+        ts.run_batch()
+        pump(qapp, main, 60)
+        made = set(prj.list_projects()) - before_files
+        assert len(made) == 1, f"expected 1 story from the .txt pair: {made}"
+        assert set(briefs.list_briefs()) == briefs_before_files, \
+            "prompt files must be used as they are, not turned into a brief"
+        story = prj.StoryProject.load(prj.PROJECTS_DIR / f"{made.pop()}.json")
+        assert story.single_output and story.scenes[0].text.strip()
+        # the .txt contents were sent verbatim
+        sent = pipeline.LAST_PROMPTS["single"]
+        assert sent["system"] == sys_path.read_text(encoding="utf-8").strip()
+        assert sent["user"] == usr_path.read_text(encoding="utf-8").strip()
+        for name in set(prj.list_projects()) - before_files:
+            (prj.PROJECTS_DIR / f"{name}.json").unlink(missing_ok=True)
+    finally:
+        briefs.delete_prompt_file(briefs.SYSTEM, sys_path.stem)
+        briefs.delete_prompt_file(briefs.USER, usr_path.stem)
+    ts.use_brief_radio.setChecked(True)
+
+    ts.radio_text.setChecked(True)
+    ts.batch_spin.setValue(1)
+    print(f"single output OK: 2 stories from 1 brief (brief streamed "
+          f"{len(brief_streamed)} updates), saved brief reused, .txt pair "
+          f"used verbatim")
+
     # --- theme toggle ------------------------------------------------------------
     from theme import apply_theme
     apply_theme("light")
@@ -337,6 +491,10 @@ def main_test():
     # cleanup test artifacts (projects and storyboards created by this test)
     for name in new_projects:
         (prj.PROJECTS_DIR / f"{name}.json").unlink(missing_ok=True)
+    for name in single_projects:
+        (prj.PROJECTS_DIR / f"{name}.json").unlink(missing_ok=True)
+    for name in set(briefs.list_briefs()) - baseline_briefs:
+        briefs.delete_brief(name)
     for name in set(prj.list_storyboards()) - before_boards:
         prj.delete_storyboard(name)
     main.state.project = None

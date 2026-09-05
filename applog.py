@@ -17,6 +17,8 @@ OPTIONS = {
     "prompts_outline": False,     # system + user prompt of outline calls
     "prompts_scene": False,       # system + user prompt of scene-writing calls
     "prompts_summary": False,     # system + user prompt of summary calls
+    "prompts_brief": False,       # the instruction that writes a brief
+    "prompts_single": False,      # a brief's two prompts, as sent to the writer
     "full_responses": False,      # complete response text of every call
 }
 

@@ -9,6 +9,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pipeline
+import project as prj
 from backends import SectionConfig, TEMPLATE_MODE_MANUAL
 from project import Scene, StoryProject
 
@@ -63,12 +64,27 @@ MOCK_SUMMARY = ("Hale examined the library at kvällstid — found the forced wi
                 "and suspected an inside job. Händelseförlopp: åtta spår, ödesdigert.")
 
 
+MOCK_BRIEF = json.dumps({
+    "system_prompt": "You are a hard-boiled noir storyteller. Write plain prose only.",
+    "user_prompt": ("Write a coherent 6000 word noir story divided into 6 or "
+                    "more scenes about Inspector Hale. Do not use scene "
+                    "numbers, titles, or separators."),
+})
+MOCK_SINGLE_STORY = ("Hale had seen worse mornings, but not many. " * 60).strip()
+
+
 def pick_response(system: str, user: str) -> str:
     blob = (system + "\n" + user).lower()
     if "inline-think-test" in blob:
         return "<think>secret reasoning plan</think>The real story begins here."
     if "story board" in blob or "storyboard" in blob and "scene" not in blob[:200]:
         pass
+    # the brief generator asks for JSON with these two keys; the writing model
+    # then gets the brief's own system prompt, which says "noir storyteller"
+    if "system_prompt" in blob and "user_prompt" in blob:
+        return MOCK_BRIEF
+    if "hard-boiled noir storyteller" in blob:
+        return MOCK_SINGLE_STORY
     if "list every character in this scene" in blob:
         return ("Inspector Hale (he/him): lead detective, retired opera singer.\n"
                 "Lady Blackwood (she/her): widow of the manor, hiding debts.\n"
@@ -324,19 +340,33 @@ def main():
     notes = []
     pipeline.NOTIFY = notes.append
     try:
-        out5 = pipeline.generate_storyboard(
-            SectionConfig(base_url=f"http://127.0.0.1:{port}"),
-            "a story CUTOFF-TEST", 3)
+        # stopped far short of Max tokens: the server's own context ran out,
+        # so telling the user to raise Max tokens would send them the wrong way
+        clamped = SectionConfig(base_url=f"http://127.0.0.1:{port}")
+        clamped.params.max_tokens = 2048
+        out5 = pipeline.generate_storyboard(clamped, "a story CUTOFF-TEST", 3)
         assert out5 == "This sentence stops mid", repr(out5)
-        assert notes and "CUT OFF by Max tokens" in notes[0], notes
-        assert "CUT OFF by Max tokens" in applog.read_log()
+        assert notes, notes
+        assert "The server stopped it" in notes[0], notes[0]
+        assert "--contextsize" in notes[0], notes[0]
+        assert "Max tokens is 2048" in notes[0], notes[0]
+        assert "The server stopped it" in applog.read_log()
+
+        # stopped right at Max tokens: raising Max tokens really is the fix
+        notes.clear()
+        tight = SectionConfig(base_url=f"http://127.0.0.1:{port}")
+        tight.params.max_tokens = 6
+        pipeline.generate_storyboard(tight, "a story CUTOFF-TEST", 3)
+        assert notes and "CUT OFF by Max tokens (6)" in notes[0], notes
+        assert "server stopped it" not in notes[0], notes[0]
+
         # a normal completed call must NOT warn
         notes.clear()
         pipeline.generate_summary(cfg, "normal scene text")
         assert not notes, f"false cutoff warning: {notes}"
     finally:
         pipeline.NOTIFY = None
-    print("max-tokens cutoff detection OK")
+    print("max-tokens cutoff detection OK (server-clamped vs budget-capped)")
 
     # automatic character tracking: people are kept, headings are filtered
     cast = pipeline.generate_cast_update(cfg, "scene prose here", {})
@@ -346,6 +376,65 @@ def main():
     assert cast["Inspector Hale"]["pronouns"] == "he/him", cast["Inspector Hale"]
     assert cast["Lady Blackwood"]["pronouns"] == "she/her"
     print("automatic character tracking OK (with pronouns)")
+
+    # single output: concept -> brief -> the whole story in one call
+    import briefs
+    chunks = []
+    pair = pipeline.generate_brief(
+        cfg, "a detective story on a night train",
+        briefs.get_instruction(briefs.DEFAULT_INSTRUCTION_NAME),
+        on_chunk=chunks.append)
+    assert "noir storyteller" in pair["system_prompt"], pair
+    assert "6000 word noir story" in pair["user_prompt"], pair
+    assert chunks, "the brief did not stream"
+
+    # the anti-padding rules must reach the model, not just exist in the file
+    sent = pipeline.LAST_PROMPTS["brief"]
+    assert briefs.BRIEF_RULES_SUFFIX.strip() in sent["system"], \
+        "the extra brief rules were not appended to the instruction"
+    assert sent["system"].startswith(
+        briefs.get_instruction(briefs.DEFAULT_INSTRUCTION_NAME)[:80]), \
+        "the chosen instruction must still come first"
+    # a hand-written instruction gets them too
+    pipeline.generate_brief(cfg, "a concept", "My own short instruction.")
+    assert "Never restate a fact" in pipeline.LAST_PROMPTS["brief"]["system"]
+
+    story_text = pipeline.generate_single_story(
+        cfg, pair["system_prompt"], pair["user_prompt"])
+    assert story_text.startswith("Hale had seen worse mornings"), story_text[:80]
+    assert len(story_text.split()) > 200, "the whole story should be long"
+
+    # the pair is sent verbatim — no templating, or a saved brief would not
+    # reproduce the story it was saved for
+    sent = pipeline.LAST_PROMPTS["single"]
+    assert sent["system"] == pair["system_prompt"], sent["system"]
+    assert sent["user"] == pair["user_prompt"], sent["user"]
+
+    # it becomes a one-scene project that exports without a scene heading
+    single = prj.make_single_output_project(
+        "a detective story on a night train", story_text)
+    assert single.single_output and len(single.scenes) == 1
+    assert "Scene 1" not in single.combined_text()
+
+    # a non-English run appends the language note to the system prompt only
+    pipeline.generate_single_story(cfg, pair["system_prompt"],
+                                   pair["user_prompt"], language="Svenska")
+    sent = pipeline.LAST_PROMPTS["single"]
+    assert "Write the story in Svenska" in sent["system"]
+    assert sent["user"] == pair["user_prompt"], "the user prompt must not change"
+
+    # an empty brief warns instead of silently writing from half a prompt
+    notes.clear()
+    pipeline.NOTIFY = notes.append
+    try:
+        empty = briefs.parse_brief_response("no json at all here")
+        assert empty["system_prompt"] == ""
+        pipeline.generate_brief(cfg, "x REASONING-TEST", "instruction")
+    except backends.ReasoningOnlyError:
+        pass
+    finally:
+        pipeline.NOTIFY = None
+    print("single output OK (brief parsed, story written verbatim)")
 
     # ollama without a model must fail with a clear message, not a server 400
     import backends
