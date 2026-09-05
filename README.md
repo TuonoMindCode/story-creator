@@ -2,11 +2,11 @@
 
 I created this app by using Claude 5.
 
-added "signel output from a description" and "singel output from saved prompts".
-"signel output from a description" if you type like "a drama about a amateur boxer" then it dos 2 llm calls, 
+added "single output from a description" and "single output from saved prompts".
+"single output from a description" if you type like "a drama about a amateur boxer" then it does 2 llm calls, 
 first call it creates a system prompt and a user prompt and the second llm call uses that system and user prompt
-for a singel output for the hole story, this works on llm models that can generate 
-long singel output, tested on these models, not perfect but it generates the output:
+for a single output for the whole story, this works on llm models that can generate 
+long single output, tested on these models, not perfect but it generates the output:
 
 Qwen3.8-27B-Uncensored-HauhauCS-Aggressive-Q4_K_P.gguf - about 7000-10000 tokens output.
 LongCat-Flash-Lite-uncensored-heretic-Native-MTP-Preserved-Q5_K_M.gguf - about 7000-13000 token output.
